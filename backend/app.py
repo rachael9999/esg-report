@@ -21,8 +21,11 @@ app = FastAPI()
 @app.post("/upload")
 async def upload(files: list[UploadFile] = File(...), session_id: str = Form(...)):
     file_paths = []
+    import uuid
     for uploaded_file in files:
-        file_path = f"/tmp/{uploaded_file.filename}"
+        safe_name = os.path.basename(uploaded_file.filename)
+        unique_name = f"{session_id}_{uuid.uuid4().hex}_{safe_name}"
+        file_path = f"/tmp/{unique_name}"
         with open(file_path, "wb") as f:
             f.write(await uploaded_file.read())
         file_paths.append(file_path)

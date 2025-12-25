@@ -1,0 +1,85 @@
+from fastapi import Request
+
+import psycopg2
+def ensure_questionnaire_exists():
+    from db.db import get_conn
+    conn = get_conn()
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM questionnaires WHERE id=1")
+            if not cur.fetchone():
+                cur.execute("INSERT INTO questionnaires (id, title, questions) VALUES (1, '默认问卷', '{}')")
+    conn.close()
+
+# 在 FastAPI 启动时确保问卷存在
+ensure_questionnaire_exists()
+from fastapi import FastAPI, UploadFile, Form
+from chains.document_chain import process_and_store_document
+import os
+
+app = FastAPI()
+
+@app.post("/upload")
+async def upload(file: UploadFile, session_id: str = Form(...)):
+    file_path = f"/tmp/{file.filename}"
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+    process_and_store_document(file_path, session_id)
+    # RAG自动问卷更新
+    from services.update_questionnaire import update_from_document
+    # 修改：收集RAG检索内容和summary
+    rag_contexts = {}
+    summary = []
+    from langchain_community.embeddings import DashScopeEmbeddings
+    from langchain_postgres.vectorstores import PGVector
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    api_key = os.environ.get("DASHSCOPE_API_KEY")
+    kpi_questions = {
+        "scope1": "企业的Scope 1（直接排放）是多少？",
+        "scope2": "企业的Scope 2（能源间接排放）是多少？",
+        "scope3": "企业的Scope 3（上下游其他间接排放）是多少？",
+        "energy_total": "企业的总能耗是多少？",
+        "renewable_ratio": "企业的可再生能源占比是多少？",
+        "hazardous_waste": "企业的危险废弃物总量是多少？",
+        "nonhazardous_waste": "企业的非危险废弃物总量是多少？",
+        "recycled_waste": "企业的回收/再利用废弃物总量是多少？"
+    }
+    embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
+    vectorstore = PGVector(
+        embeddings,
+        connection=os.getenv("PGVECTOR_CONN", "postgresql+psycopg2://admin:admin@localhost:5432/postgres"),
+        collection_name=f"session_{session_id}",
+        use_jsonb=True
+    )
+    for key, question in kpi_questions.items():
+        docs = vectorstore.similarity_search(question, k=1)
+        if docs:
+            rag_contexts[key] = docs[0].page_content
+            summary.append(f"[{key}] {question}\n→ {docs[0].page_content[:200]}...")
+        else:
+            rag_contexts[key] = "未检索到相关内容"
+            summary.append(f"[{key}] {question}\n→ 未检索到相关内容")
+    update_from_document(session_id, file_path)
+    os.remove(file_path)
+    from chains.questionnaire_chain import get_questionnaire
+    result = get_questionnaire(session_id)
+    result["rag_contexts"] = rag_contexts
+    result["summary"] = "\n\n".join(summary)
+    return result
+
+@app.post("/chat")
+async def chat(message: str = Form(...), session_id: str = Form(...)):
+    from chains.chat_chain import handle_chat
+    response = await handle_chat(message, session_id)
+    return response
+
+@app.get("/questionnaire")
+async def get_questionnaire_api(request: Request):
+    session_id = request.query_params.get("session_id")
+    if not session_id:
+        return {"error": "session_id required"}
+    from chains.questionnaire_chain import get_questionnaire
+    return get_questionnaire(session_id)

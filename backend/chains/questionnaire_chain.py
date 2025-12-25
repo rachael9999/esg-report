@@ -11,9 +11,18 @@ def get_questionnaire(session_id):
                 answers = row[0]
                 if isinstance(answers, str):
                     answers = json.loads(answers)
-                return {"answers": answers}
+                sources = {}
+                conflicts = {}
+                if isinstance(answers, dict):
+                    sources = answers.pop("_sources", {})
+                    conflicts = answers.pop("_conflicts", {})
+                return {
+                    "answers": answers,
+                    "answer_sources": sources,
+                    "answer_conflicts": conflicts
+                }
     conn.close()
-    return {"answers": {}}
+    return {"answers": {}, "answer_sources": {}, "answer_conflicts": {}}
 
 def update_questionnaire(session_id):
     # 重新计算/填充问卷答案（占位）

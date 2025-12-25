@@ -1,4 +1,5 @@
 import streamlit as st
+import html
 
 def questionnaire_page():
     st.header("环境政策")
@@ -29,6 +30,8 @@ def questionnaire_page():
     answers = {}
     rag_contexts = {}
     summary = ""
+    answer_sources = {}
+    answer_conflicts = {}
     try:
         resp = requests.get(f"http://localhost:8000/questionnaire?session_id={session_id}")
         if resp.ok:
@@ -36,8 +39,31 @@ def questionnaire_page():
             answers = data.get("answers", {})
             rag_contexts = data.get("rag_contexts", {})
             summary = data.get("summary", "")
+            answer_sources = data.get("answer_sources", {}) or answers.get("_sources", {})
+            answer_conflicts = data.get("answer_conflicts", {}) or answers.get("_conflicts", {})
     except Exception:
         pass
+
+    if isinstance(answers, dict):
+        answers.pop("_sources", None)
+        answers.pop("_conflicts", None)
+
+    def render_label(field_key, text):
+        source_items = answer_sources.get(field_key, [])
+        if source_items:
+            tooltip = html.escape("\n".join(source_items))
+            st.markdown(f"{text} <span title=\"{tooltip}\">📎</span>", unsafe_allow_html=True)
+        else:
+            st.markdown(text)
+
+    def render_conflict(field_key):
+        conflict_items = answer_conflicts.get(field_key, [])
+        if conflict_items:
+            details = "\n".join(
+                f"- {item.get('value')}（{item.get('source', '未知来源')}）"
+                for item in conflict_items
+            )
+            st.warning(f"检测到多个来源存在冲突，请确认：\n{details}")
     def normalize_multiselect_defaults(value, options):
         if not value:
             return []
@@ -51,17 +77,41 @@ def questionnaire_page():
 
     # 1. 环境政策
     st.subheader("环境政策")
+    render_label("policy_options", "贵公司是否有关于以下环境议题的正式政策？(多选)")
     policy_options = st.multiselect(
-        "贵公司是否有关于以下环境议题的正式政策？(多选)",
+        "政策议题",
         options_map["0"],
-        default=normalize_multiselect_defaults(answers.get("policy_options", []), options_map["0"])
+        default=normalize_multiselect_defaults(answers.get("policy_options", []), options_map["0"]),
+        key="policy_options",
+        label_visibility="collapsed"
     )
-    quantitative_target = st.text_input("政策中是否包含定量目标？(需提供目标数值与年份)", value=answers.get("quantitative_target", ""))
+    render_label("quantitative_target", "政策中是否包含定量目标？(需提供目标数值与年份)")
+    quantitative_target = st.text_input(
+        "定量目标",
+        value=answers.get("quantitative_target", ""),
+        key="quantitative_target",
+        label_visibility="collapsed"
+    )
+    render_conflict("quantitative_target")
 
     # 2. 减排与废弃物措施
     st.subheader("减排与废弃物措施")
-    energy_measures = st.text_area("在减少能源消耗和温室气体排放方面，采取了哪些措施？", value=answers.get("energy_measures", ""))
-    waste_measures = st.text_area("在废弃物与化学品管理方面，采取了哪些措施？", value=answers.get("waste_measures", ""))
+    render_label("energy_measures", "在减少能源消耗和温室气体排放方面，采取了哪些措施？")
+    energy_measures = st.text_area(
+        "能源/温室气体措施",
+        value=answers.get("energy_measures", ""),
+        key="energy_measures",
+        label_visibility="collapsed"
+    )
+    render_conflict("energy_measures")
+    render_label("waste_measures", "在废弃物与化学品管理方面，采取了哪些措施？")
+    waste_measures = st.text_area(
+        "废弃物/化学品措施",
+        value=answers.get("waste_measures", ""),
+        key="waste_measures",
+        label_visibility="collapsed"
+    )
+    render_conflict("waste_measures")
 
     # 3. 关键绩效指标 (KPIs)
     st.subheader("关键绩效指标 (KPIs)")
@@ -76,26 +126,105 @@ def questionnaire_page():
         else:
             return default
 
-    scope1 = st.number_input("Scope 1 (直接排放)：______ 吨 CO2 当量", min_value=0.0, value=safe_float(answers.get("scope1", 0)), format="%.2f")
-    scope2 = st.number_input("Scope 2 (能源间接排放)：______ 吨 CO2 当量", min_value=0.0, value=safe_float(answers.get("scope2", 0)), format="%.2f")
-    scope3 = st.number_input("Scope 3 (上下游其他间接排放)：______ 吨 CO2 当量", min_value=0.0, value=safe_float(answers.get("scope3", 0)), format="%.2f")
-    energy_total = st.number_input("总能耗：______ kWh", min_value=0.0, value=safe_float(answers.get("energy_total", 0)), format="%.2f")
-    renewable_ratio = st.number_input("可再生能源占比：______ %", min_value=0.0, max_value=100.0, value=safe_float(answers.get("renewable_ratio", 0)), format="%.2f")
-    hazardous_waste = st.number_input("危险废弃物总量：______ kg", min_value=0.0, value=safe_float(answers.get("hazardous_waste", 0)), format="%.2f")
-    nonhazardous_waste = st.number_input("非危险废弃物总量：______ kg", min_value=0.0, value=safe_float(answers.get("nonhazardous_waste", 0)), format="%.2f")
-    recycled_waste = st.number_input("回收/再利用废弃物总量：______ kg", min_value=0.0, value=safe_float(answers.get("recycled_waste", 0)), format="%.2f")
+    render_label("scope1", "Scope 1 (直接排放)：______ 吨 CO2 当量")
+    scope1 = st.number_input(
+        "Scope 1",
+        min_value=0.0,
+        value=safe_float(answers.get("scope1", 0)),
+        format="%.2f",
+        key="scope1",
+        label_visibility="collapsed"
+    )
+    render_conflict("scope1")
+    render_label("scope2", "Scope 2 (能源间接排放)：______ 吨 CO2 当量")
+    scope2 = st.number_input(
+        "Scope 2",
+        min_value=0.0,
+        value=safe_float(answers.get("scope2", 0)),
+        format="%.2f",
+        key="scope2",
+        label_visibility="collapsed"
+    )
+    render_conflict("scope2")
+    render_label("scope3", "Scope 3 (上下游其他间接排放)：______ 吨 CO2 当量")
+    scope3 = st.number_input(
+        "Scope 3",
+        min_value=0.0,
+        value=safe_float(answers.get("scope3", 0)),
+        format="%.2f",
+        key="scope3",
+        label_visibility="collapsed"
+    )
+    render_conflict("scope3")
+    render_label("energy_total", "总能耗：______ kWh")
+    energy_total = st.number_input(
+        "总能耗",
+        min_value=0.0,
+        value=safe_float(answers.get("energy_total", 0)),
+        format="%.2f",
+        key="energy_total",
+        label_visibility="collapsed"
+    )
+    render_conflict("energy_total")
+    render_label("renewable_ratio", "可再生能源占比：______ %")
+    renewable_ratio = st.number_input(
+        "可再生能源占比",
+        min_value=0.0,
+        max_value=100.0,
+        value=safe_float(answers.get("renewable_ratio", 0)),
+        format="%.2f",
+        key="renewable_ratio",
+        label_visibility="collapsed"
+    )
+    render_conflict("renewable_ratio")
+    render_label("hazardous_waste", "危险废弃物总量：______ kg")
+    hazardous_waste = st.number_input(
+        "危险废弃物总量",
+        min_value=0.0,
+        value=safe_float(answers.get("hazardous_waste", 0)),
+        format="%.2f",
+        key="hazardous_waste",
+        label_visibility="collapsed"
+    )
+    render_conflict("hazardous_waste")
+    render_label("nonhazardous_waste", "非危险废弃物总量：______ kg")
+    nonhazardous_waste = st.number_input(
+        "非危险废弃物总量",
+        min_value=0.0,
+        value=safe_float(answers.get("nonhazardous_waste", 0)),
+        format="%.2f",
+        key="nonhazardous_waste",
+        label_visibility="collapsed"
+    )
+    render_conflict("nonhazardous_waste")
+    render_label("recycled_waste", "回收/再利用废弃物总量：______ kg")
+    recycled_waste = st.number_input(
+        "回收/再利用废弃物总量",
+        min_value=0.0,
+        value=safe_float(answers.get("recycled_waste", 0)),
+        format="%.2f",
+        key="recycled_waste",
+        label_visibility="collapsed"
+    )
+    render_conflict("recycled_waste")
 
     # 4. 碳管理实践
     st.subheader("碳管理实践")
+    render_label("ghg_practice", "关于 GHG 监测和报告实践，以下哪些适用？")
     ghg_practice = st.multiselect(
-        "关于 GHG 监测和报告实践，以下哪些适用？",
+        "GHG 监测/报告",
         options_map["12"],
-        default=normalize_multiselect_defaults(answers.get("ghg_practice", []), options_map["12"])
+        default=normalize_multiselect_defaults(answers.get("ghg_practice", []), options_map["12"]),
+        key="ghg_practice",
+        label_visibility="collapsed"
     )
+    render_label("carbon_target", "关于碳减排目标，以下哪些适用？")
     carbon_target = st.multiselect(
-        "关于碳减排目标，以下哪些适用？",
+        "碳减排目标",
         options_map["13"],
-        default=normalize_multiselect_defaults(answers.get("carbon_target", []), options_map["13"])
+        default=normalize_multiselect_defaults(answers.get("carbon_target", []), options_map["13"]),
+        key="carbon_target",
+        label_visibility="collapsed"
     )
 
     # 导出 Markdown 摘要

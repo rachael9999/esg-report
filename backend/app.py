@@ -13,26 +13,30 @@ def ensure_questionnaire_exists():
 
 # 在 FastAPI 启动时确保问卷存在
 ensure_questionnaire_exists()
-from fastapi import FastAPI, UploadFile, Form
-from chains.document_chain import process_and_store_document
+from fastapi import FastAPI, UploadFile, Form, File
 import os
 
 app = FastAPI()
 
 @app.post("/upload")
-async def upload(file: UploadFile, session_id: str = Form(...)):
-    file_path = f"/tmp/{file.filename}"
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
-    process_and_store_document(file_path, session_id)
+async def upload(files: list[UploadFile] = File(...), session_id: str = Form(...)):
+    file_paths = []
+    import uuid
+    for uploaded_file in files:
+        safe_name = os.path.basename(uploaded_file.filename)
+        unique_name = f"{session_id}_{uuid.uuid4().hex}_{safe_name}"
+        file_path = f"/tmp/{unique_name}"
+        with open(file_path, "wb") as f:
+            f.write(await uploaded_file.read())
+        file_paths.append(file_path)
     # RAG自动问卷更新
     from services.update_questionnaire import update_from_document
+    update_from_document(session_id, file_paths)
     # 修改：收集RAG检索内容和summary
     rag_contexts = {}
     summary = []
     from langchain_community.embeddings import DashScopeEmbeddings
     from langchain_postgres.vectorstores import PGVector
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
     import os
     from dotenv import load_dotenv
     load_dotenv()
@@ -62,8 +66,8 @@ async def upload(file: UploadFile, session_id: str = Form(...)):
         else:
             rag_contexts[key] = "未检索到相关内容"
             summary.append(f"[{key}] {question}\n→ 未检索到相关内容")
-    update_from_document(session_id, file_path)
-    os.remove(file_path)
+    for file_path in file_paths:
+        os.remove(file_path)
     from chains.questionnaire_chain import get_questionnaire
     result = get_questionnaire(session_id)
     result["rag_contexts"] = rag_contexts
@@ -106,11 +110,22 @@ async def update_answers(session_id: str = Form(...), answers: str = Form(...)):
     conn = get_conn()
     with conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM answers WHERE session_id=%s ORDER BY created_at DESC LIMIT 1", (session_id,))
+            cur.execute("SELECT id, answers FROM answers WHERE session_id=%s ORDER BY created_at DESC LIMIT 1", (session_id,))
             row = cur.fetchone()
             if row:
-                answer_id = row[0]
-                cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (answers, answer_id))
+                answer_id, existing = row
+                if existing and isinstance(existing, str):
+                    existing = json.loads(existing)
+                source_data = {}
+                conflict_data = {}
+                if isinstance(existing, dict):
+                    source_data = existing.get("_sources", {})
+                    conflict_data = existing.get("_conflicts", {})
+                updated = json.loads(answers)
+                if isinstance(updated, dict):
+                    updated["_sources"] = source_data
+                    updated["_conflicts"] = conflict_data
+                cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(updated), answer_id))
             else:
                 cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, answers))
     conn.close()

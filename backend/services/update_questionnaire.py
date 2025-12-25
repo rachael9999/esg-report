@@ -40,6 +40,25 @@ def update_from_document(session_id, file=None):
             use_jsonb=True
         )
         vectorstore.add_documents(chunks)
+    # Extract company name
+    company_name = "该企业"
+    try:
+        docs_for_name = vectorstore.similarity_search("本文档提到的企业或公司名称是什么？", k=1)
+        if docs_for_name:
+            from langchain_community.chat_models import ChatTongyi
+            from pydantic import SecretStr
+            from dotenv import load_dotenv
+            load_dotenv()
+            api_key = os.environ.get("DASHSCOPE_API_KEY")
+            llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(api_key))
+            name_prompt = f"请从以下内容中提取企业或公司名称，只输出名称，不要解释。\n内容：{docs_for_name[0].page_content}"
+            name_result = llm.invoke(name_prompt)
+            if hasattr(name_result, "content"):
+                extracted_name = name_result.content.strip()
+                if extracted_name and len(extracted_name) < 50:  # reasonable length
+                    company_name = extracted_name
+    except:
+        pass
     else:
         from dotenv import load_dotenv
         load_dotenv()
@@ -65,59 +84,77 @@ def update_from_document(session_id, file=None):
     # 3. RAG 检索并自动更新 answers
     questions = {
         "policy_options": {
-            "question": "贵公司是否有关于以下环境议题的正式政策？选项: 能源消耗与温室气体 (GHG), 水资源, 大气污染 (非温室气体), 材料、化学品与废弃物, 生物多样性, 产品使用寿命终止 (如回收)。输出选中的选项列表，如 ['能源消耗与温室气体 (GHG)']",
-            "type": "list"
+            "question": f"{company_name}是否有关于以下环境议题的正式政策？选项: 能源消耗与温室气体 (GHG), 水资源, 大气污染 (非温室气体), 材料、化学品与废弃物, 生物多样性, 产品使用寿命终止 (如回收)。输出选中的选项列表，如 ['能源消耗与温室气体 (GHG)']",
+            "type": "list",
+            "options": [
+                "能源消耗与温室气体 (GHG)",
+                "水资源",
+                "大气污染 (非温室气体)",
+                "材料、化学品与废弃物",
+                "生物多样性",
+                "产品使用寿命终止 (如回收)"
+            ]
         },
         "quantitative_target": {
-            "question": "政策中是否包含定量目标？输出目标数值与年份，如 减少排放20% by 2030",
+            "question": f"{company_name}的政策中是否包含定量目标？输出目标数值与年份，如 减少排放20% by 2030",
             "type": "text"
         },
         "energy_measures": {
-            "question": "在减少能源消耗和温室气体排放方面，采取了哪些措施？",
+            "question": f"{company_name}在减少能源消耗和温室气体排放方面，采取了哪些措施？",
             "type": "text"
         },
         "waste_measures": {
-            "question": "在废弃物与化学品管理方面，采取了哪些措施？",
+            "question": f"{company_name}在废弃物与化学品管理方面，采取了哪些措施？",
             "type": "text"
         },
         "ghg_practice": {
-            "question": "关于 GHG 监测和报告实践，以下哪些适用？选项: 排放核算符合 ISO 14064-1 或 GHG Protocol 标准, 排放数据经过第三方验证 (ISAE 3410 等), 报告已向公众披露。输出选中的选项列表",
-            "type": "list"
+            "question": f"{company_name}关于 GHG 监测和报告实践，以下哪些适用？选项: 排放核算符合 ISO 14064-1 或 GHG Protocol 标准, 排放数据经过第三方验证 (ISAE 3410 等), 报告已向公众披露。输出选中的选项列表",
+            "type": "list",
+            "options": [
+                "排放核算符合 ISO 14064-1 或 GHG Protocol 标准",
+                "排放数据经过第三方验证 (ISAE 3410 等)",
+                "报告已向公众披露"
+            ]
         },
         "carbon_target": {
-            "question": "关于碳减排目标，以下哪些适用？选项: 已公开承诺科学碳目标 (SBTi), 已有经 SBTi 批准的减排目标, 设有年度减排目标达成进度的审查机制。输出选中的选项列表",
-            "type": "list"
+            "question": f"{company_name}关于碳减排目标，以下哪些适用？选项: 已公开承诺科学碳目标 (SBTi), 已有经 SBTi 批准的减排目标, 设有年度减排目标达成进度的审查机制。输出选中的选项列表",
+            "type": "list",
+            "options": [
+                "已公开承诺科学碳目标 (SBTi)",
+                "已有经 SBTi 批准的减排目标",
+                "设有年度减排目标达成进度的审查机制"
+            ]
         },
         "scope1": {
-            "question": "企业的Scope 1（直接排放）是多少？",
+            "question": f"{company_name}的Scope 1（直接排放）是多少？单位为吨 CO2 当量",
             "type": "float"
         },
         "scope2": {
-            "question": "企业的Scope 2（能源间接排放）是多少？",
+            "question": f"{company_name}的Scope 2（能源间接排放）是多少？单位为吨 CO2 当量",
             "type": "float"
         },
         "scope3": {
-            "question": "企业的Scope 3（上下游其他间接排放）是多少？",
+            "question": f"{company_name}的Scope 3（上下游其他间接排放）是多少？单位为吨 CO2 当量",
             "type": "float"
         },
         "energy_total": {
-            "question": "企业的总能耗是多少？",
+            "question": f"{company_name}的总能耗是多少？单位为kWh",
             "type": "float"
         },
         "renewable_ratio": {
-            "question": "企业的可再生能源占比是多少？",
+            "question": f"{company_name}的可再生能源占比是多少？单位为%",
             "type": "float"
         },
         "hazardous_waste": {
-            "question": "企业的危险废弃物总量是多少？",
+            "question": f"{company_name}的危险废弃物总量是多少？单位为kg",
             "type": "float"
         },
         "nonhazardous_waste": {
-            "question": "企业的非危险废弃物总量是多少？",
+            "question": f"{company_name}的非危险废弃物总量是多少？单位为kg",
             "type": "float"
         },
         "recycled_waste": {
-            "question": "企业的回收/再利用废弃物总量是多少？",
+            "question": f"{company_name}的回收/再利用废弃物总量是多少？单位为kg",
             "type": "float"
         }
     }
@@ -125,6 +162,7 @@ def update_from_document(session_id, file=None):
     for key, qinfo in questions.items():
         question = qinfo["question"]
         qtype = qinfo["type"]
+        options = qinfo.get("options", [])
         docs = vectorstore.similarity_search(question, k=1)
         if docs:
             from langchain_community.chat_models import ChatTongyi
@@ -133,7 +171,16 @@ def update_from_document(session_id, file=None):
             load_dotenv()
             api_key = os.environ.get("DASHSCOPE_API_KEY")
             llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(api_key))
-            rag_prompt = f"请根据以下内容回答问卷问题，只输出答案，不要解释。\n问题：{question}\n内容：{docs[0].page_content}"
+            if qtype == "list" and options:
+                rag_prompt = (
+                    "请根据以下内容回答问卷问题。"
+                    "只能从给定选项中选择，输出JSON数组，不要解释。\n"
+                    f"问题：{question}\n"
+                    f"可选项：{options}\n"
+                    f"内容：{docs[0].page_content}"
+                )
+            else:
+                rag_prompt = f"请根据以下内容回答问卷问题，只输出答案，不要解释。\n问题：{question}\n内容：{docs[0].page_content}"
             ai_result = llm.invoke(rag_prompt)
             if hasattr(ai_result, "content"):
                 value = ai_result.content.strip()
@@ -159,16 +206,26 @@ def update_from_document(session_id, file=None):
                 try:
                     parsed = json.loads(value)
                     if isinstance(parsed, list):
-                        answer_update[key] = parsed
-                        print(f"List value: {parsed}")
+                        normalized = [
+                            item.strip().strip("'").strip('"')
+                            for item in parsed
+                            if isinstance(item, str)
+                        ]
+                        if options:
+                            normalized = [item for item in normalized if item in options]
+                        answer_update[key] = normalized
+                        print(f"List value: {normalized}")
                     else:
                         answer_update[key] = []
                         print("Not a list, set to empty")
                 except:
                     # Try to parse as comma separated
                     if value:
-                        answer_update[key] = [v.strip() for v in value.split(',') if v.strip()]
-                        print(f"Parsed as list: {answer_update[key]}")
+                        parsed_values = [v.strip().strip("'").strip('"') for v in value.split(',') if v.strip()]
+                        if options:
+                            parsed_values = [item for item in parsed_values if item in options]
+                        answer_update[key] = parsed_values
+                        print(f"Parsed as list: {parsed_values}")
                     else:
                         answer_update[key] = []
                         print("No list, set to empty")

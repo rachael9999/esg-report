@@ -34,6 +34,7 @@ async def handle_chat(message, session_id):
     load_dotenv()
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     rag_result = ""
+    sources = []
     try:
         embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
         vectorstore = PGVector(
@@ -43,8 +44,17 @@ async def handle_chat(message, session_id):
             use_jsonb_metadata=True
         )
         docs = vectorstore.similarity_search(message, k=2)
+        sources = []
         if docs:
             rag_result = "\n\n".join([d.page_content for d in docs])
+            for d in docs:
+                source = d.metadata.get('source', 'Unknown')
+                if '/' in source or '\\' in source:
+                    source = source.split('/')[-1].split('\\')[-1]
+                page = d.metadata.get('page', 'N/A')
+                sources.append(f"{source}: 页 {page}")
+        else:
+            rag_result = ""
     except Exception:
         pass
 
@@ -72,4 +82,4 @@ async def handle_chat(message, session_id):
 
     # 自动更新问卷
     update_from_chat(session_id, message)
-    return {"response": ai_response_str}
+    return {"response": ai_response_str, "sources": sources}

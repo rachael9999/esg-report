@@ -83,3 +83,60 @@ async def get_questionnaire_api(request: Request):
         return {"error": "session_id required"}
     from chains.questionnaire_chain import get_questionnaire
     return get_questionnaire(session_id)
+
+@app.post("/create_session")
+async def create_session(name: str = Form(...)):
+    import uuid
+    from db.db import get_conn
+    session_id = str(uuid.uuid4())
+    conn = get_conn()
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO sessions (id, session_token, name) VALUES (%s, %s, %s)",
+                (session_id, session_id, name)
+            )
+    conn.close()
+    return {"session_id": session_id}
+
+@app.post("/update_answers")
+async def update_answers(session_id: str = Form(...), answers: str = Form(...)):
+    from db.db import get_conn
+    import json
+    conn = get_conn()
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM answers WHERE session_id=%s ORDER BY created_at DESC LIMIT 1", (session_id,))
+            row = cur.fetchone()
+            if row:
+                answer_id = row[0]
+                cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (answers, answer_id))
+            else:
+                cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, answers))
+    conn.close()
+    return {"status": "updated"}
+
+@app.get("/chats")
+async def get_chats(request: Request):
+    session_id = request.query_params.get("session_id")
+    if not session_id:
+        return {"error": "session_id required"}
+    from db.db import get_conn
+    conn = get_conn()
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_input, ai_response FROM chats WHERE session_id=%s ORDER BY created_at", (session_id,))
+            rows = cur.fetchall()
+    conn.close()
+    return [{"user_input": row[0], "ai_response": row[1]} for row in rows]
+
+@app.get("/sessions")
+async def get_sessions():
+    from db.db import get_conn
+    conn = get_conn()
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM sessions ORDER BY created_at DESC")
+            rows = cur.fetchall()
+    conn.close()
+    return [{"id": row[0], "name": row[1]} for row in rows]

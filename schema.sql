@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id VARCHAR(128) PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
     session_token VARCHAR(128) UNIQUE NOT NULL,
+    name VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -27,19 +27,34 @@ def questionnaire_page():
     import requests
     session_id = st.session_state.get("session_id", "default")
     answers = {}
+    rag_contexts = {}
+    summary = ""
     try:
         resp = requests.get(f"http://localhost:8000/questionnaire?session_id={session_id}")
         if resp.ok:
-            answers = resp.json().get("answers", {})
+            data = resp.json()
+            answers = data.get("answers", {})
+            rag_contexts = data.get("rag_contexts", {})
+            summary = data.get("summary", "")
     except Exception:
         pass
+    def normalize_multiselect_defaults(value, options):
+        if not value:
+            return []
+        normalized = []
+        for item in value:
+            if isinstance(item, str):
+                item = item.strip().strip("'").strip('"')
+                if item in options:
+                    normalized.append(item)
+        return normalized
 
     # 1. 环境政策
     st.subheader("环境政策")
     policy_options = st.multiselect(
         "贵公司是否有关于以下环境议题的正式政策？(多选)",
         options_map["0"],
-        default=answers.get("policy_options", [])
+        default=normalize_multiselect_defaults(answers.get("policy_options", []), options_map["0"])
     )
     quantitative_target = st.text_input("政策中是否包含定量目标？(需提供目标数值与年份)", value=answers.get("quantitative_target", ""))
 
@@ -72,10 +87,47 @@ def questionnaire_page():
 
     # 4. 碳管理实践
     st.subheader("碳管理实践")
-    ghg_practice = st.multiselect("关于 GHG 监测和报告实践，以下哪些适用？", options_map["12"], default=answers.get("ghg_practice", []))
-    carbon_target = st.multiselect("关于碳减排目标，以下哪些适用？", options_map["13"], default=answers.get("carbon_target", []))
+    ghg_practice = st.multiselect(
+        "关于 GHG 监测和报告实践，以下哪些适用？",
+        options_map["12"],
+        default=normalize_multiselect_defaults(answers.get("ghg_practice", []), options_map["12"])
+    )
+    carbon_target = st.multiselect(
+        "关于碳减排目标，以下哪些适用？",
+        options_map["13"],
+        default=normalize_multiselect_defaults(answers.get("carbon_target", []), options_map["13"])
+    )
 
     # 导出 Markdown 摘要
     if st.button("导出 Markdown 摘要"):
-        md = f"""# ESG 环境问卷摘要\n\n## 环境政策\n- 政策议题: {', '.join(policy_options)}\n- 定量目标: {quantitative_target}\n\n## 减排与废弃物措施\n- 能源/温室气体措施: {energy_measures}\n- 废弃物/化学品措施: {waste_measures}\n\n## 关键绩效指标 (KPIs)\n- Scope 1: {scope1} 吨 CO2 当量\n- Scope 2: {scope2} 吨 CO2 当量\n- Scope 3: {scope3} 吨 CO2 当量\n- 总能耗: {energy_total} kWh\n- 可再生能源占比: {renewable_ratio} %\n- 危险废弃物: {hazardous_waste} kg\n- 非危险废弃物: {nonhazardous_waste} kg\n- 回收/再利用废弃物: {recycled_waste} kg\n\n## 碳管理实践\n- GHG 监测/报告: {', '.join(ghg_practice)}\n- 碳减排目标: {', '.join(carbon_target)}\n"""
+        rag_section = "\n## RAG 检索内容\n\n"
+        for key, content in rag_contexts.items():
+            rag_section += f"### {key}\n{content}\n\n"
+        md = f"""# ESG 环境问卷摘要\n\n## 环境政策\n- 政策议题: {', '.join(policy_options)}\n- 定量目标: {quantitative_target}\n\n## 减排与废弃物措施\n- 能源/温室气体措施: {energy_measures}\n- 废弃物/化学品措施: {waste_measures}\n\n## 关键绩效指标 (KPIs)\n- Scope 1: {scope1} 吨 CO2 当量\n- Scope 2: {scope2} 吨 CO2 当量\n- Scope 3: {scope3} 吨 CO2 当量\n- 总能耗: {energy_total} kWh\n- 可再生能源占比: {renewable_ratio} %\n- 危险废弃物: {hazardous_waste} kg\n- 非危险废弃物: {nonhazardous_waste} kg\n- 回收/再利用废弃物: {recycled_waste} kg\n\n## 碳管理实践\n- GHG 监测/报告: {', '.join(ghg_practice)}\n- 碳减排目标: {', '.join(carbon_target)}\n\n{rag_section}\n## RAG 摘要\n{summary}"""
         st.download_button("下载 Markdown 文件", md, file_name="esg_summary.md")
+
+    # 保存更改
+    if st.button("保存问卷更改"):
+        updated_answers = {
+            "policy_options": policy_options,
+            "quantitative_target": quantitative_target,
+            "energy_measures": energy_measures,
+            "waste_measures": waste_measures,
+            "scope1": scope1,
+            "scope2": scope2,
+            "scope3": scope3,
+            "energy_total": energy_total,
+            "renewable_ratio": renewable_ratio,
+            "hazardous_waste": hazardous_waste,
+            "nonhazardous_waste": nonhazardous_waste,
+            "recycled_waste": recycled_waste,
+            "ghg_practice": ghg_practice,
+            "carbon_target": carbon_target
+        }
+        import requests
+        import json
+        response = requests.post("http://localhost:8000/update_answers", data={"session_id": session_id, "answers": json.dumps(updated_answers)})
+        if response.ok:
+            st.success("问卷已保存！")
+        else:
+            st.error("保存失败")

@@ -1,5 +1,4 @@
-from fastapi import Request
-
+from fastapi import Request, FastAPI, UploadFile, Form, File
 import psycopg2
 def ensure_questionnaire_exists():
     from db.db import get_conn
@@ -13,17 +12,15 @@ def ensure_questionnaire_exists():
 
 # 在 FastAPI 启动时确保问卷存在
 ensure_questionnaire_exists()
-from fastapi import FastAPI, UploadFile, Form, File
-import os
-
 app = FastAPI()
 
 @app.post("/upload")
 async def upload(files: list[UploadFile] = File(...), session_id: str = Form(...)):
     file_paths = []
-    import uuid
+    import os
     for uploaded_file in files:
-        safe_name = os.path.basename(uploaded_file.filename)
+        filename = uploaded_file.filename if uploaded_file.filename is not None else "unknown"
+        safe_name = os.path.basename(filename)
         unique_name = f"{session_id}_{uuid.uuid4().hex}_{safe_name}"
         file_path = f"/tmp/{unique_name}"
         with open(file_path, "wb") as f:

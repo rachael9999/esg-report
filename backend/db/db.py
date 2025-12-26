@@ -6,9 +6,9 @@ load_dotenv()
 
 def get_conn():
     return psycopg2.connect(
-        host=os.getenv("PGHOST", "localhost"),
-        port=os.getenv("PGPORT", 5432),
-        user=os.getenv("PGUSER", "admin"),
-        password=os.getenv("PGPASSWORD", "admin"),
-        dbname=os.getenv("PGDATABASE", "postgres")
+        host=os.getenv("PGHOST"),
+        port=os.getenv("PGPORT"),
+        user=os.getenv("PGUSER"),
+        password=os.getenv("PGPASSWORD"),
+        dbname=os.getenv("PGDATABASE")
     )

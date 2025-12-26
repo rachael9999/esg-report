@@ -2,16 +2,28 @@ import streamlit as st
 import html
 
 def questionnaire_page():
-    # --- Session ID change detection ---
-    if 'last_session_id' not in st.session_state:
-        st.session_state['last_session_id'] = st.session_state.get('session_id', 'default')
-    if st.session_state.get('session_id', 'default') != st.session_state['last_session_id']:
-        # 清空所有问卷相关字段
-        for key in list(st.session_state.keys()):
-            if key not in ('session_id', 'last_session_id'):
-                del st.session_state[key]
-        st.session_state['last_session_id'] = st.session_state.get('session_id', 'default')
-        st.rerun()
+    session_id = st.session_state.get("session_id", "default")
+    last_questionnaire_session = st.session_state.get("questionnaire_session_id")
+    session_changed = last_questionnaire_session != session_id
+    if session_changed:
+        questionnaire_keys = [
+            "policy_options",
+            "quantitative_target",
+            "energy_measures",
+            "waste_measures",
+            "scope1",
+            "scope2",
+            "scope3",
+            "energy_total",
+            "renewable_ratio",
+            "hazardous_waste",
+            "nonhazardous_waste",
+            "recycled_waste",
+            "ghg_practice",
+            "carbon_target",
+        ]
+        for key in questionnaire_keys:
+            st.session_state.pop(key, None)
     # --- Unit conversion helpers ---
     def convert_to_ton_co2(value, unit):
         """
@@ -69,7 +81,6 @@ def questionnaire_page():
 
     # Fetch answers
     import requests
-    session_id = st.session_state.get("session_id", "default")
     answers = {}
     rag_contexts = {}
     summary = ""
@@ -126,6 +137,11 @@ def questionnaire_page():
     # 1. 环境政策
     st.subheader("环境政策")
     render_label("policy_options", "贵公司是否有关于以下环境议题的正式政策？(多选)")
+    if session_changed:
+        st.session_state["policy_options"] = normalize_multiselect_defaults(
+            answers.get("policy_options", []),
+            options_map["0"],
+        )
     policy_options = st.multiselect(
         "政策议题",
         options_map["0"],
@@ -134,6 +150,8 @@ def questionnaire_page():
         label_visibility="collapsed"
     )
     render_label("quantitative_target", "政策中是否包含定量目标？(需提供目标数值与年份)")
+    if session_changed:
+        st.session_state["quantitative_target"] = answers.get("quantitative_target", "")
     quantitative_target = st.text_input(
         "定量目标",
         value=answers.get("quantitative_target", ""),
@@ -145,6 +163,8 @@ def questionnaire_page():
     # 2. 减排与废弃物措施
     st.subheader("减排与废弃物措施")
     render_label("energy_measures", "在减少能源消耗和温室气体排放方面，采取了哪些措施？")
+    if session_changed:
+        st.session_state["energy_measures"] = answers.get("energy_measures", "")
     energy_measures = st.text_area(
         "能源/温室气体措施",
         value=answers.get("energy_measures", ""),
@@ -153,6 +173,8 @@ def questionnaire_page():
     )
     render_conflict("energy_measures")
     render_label("waste_measures", "在废弃物与化学品管理方面，采取了哪些措施？")
+    if session_changed:
+        st.session_state["waste_measures"] = answers.get("waste_measures", "")
     waste_measures = st.text_area(
         "废弃物/化学品措施",
         value=answers.get("waste_measures", ""),
@@ -178,6 +200,8 @@ def questionnaire_page():
     scope1_value = safe_float(answers.get("scope1", 0))
     scope1_unit = answers.get("scope1_unit", "吨")  # default to 吨
     scope1_value = convert_to_ton_co2(scope1_value, scope1_unit)
+    if session_changed:
+        st.session_state["scope1"] = scope1_value
     scope1 = st.number_input(
         "Scope 1 (吨 CO2)",
         min_value=0.0,
@@ -191,6 +215,8 @@ def questionnaire_page():
     scope2_value = safe_float(answers.get("scope2", 0))
     scope2_unit = answers.get("scope2_unit", "吨")
     scope2_value = convert_to_ton_co2(scope2_value, scope2_unit)
+    if session_changed:
+        st.session_state["scope2"] = scope2_value
     scope2 = st.number_input(
         "Scope 2 (吨 CO2)",
         min_value=0.0,
@@ -204,6 +230,8 @@ def questionnaire_page():
     scope3_value = safe_float(answers.get("scope3", 0))
     scope3_unit = answers.get("scope3_unit", "吨")
     scope3_value = convert_to_ton_co2(scope3_value, scope3_unit)
+    if session_changed:
+        st.session_state["scope3"] = scope3_value
     scope3 = st.number_input(
         "Scope 3 (吨 CO2)",
         min_value=0.0,
@@ -217,6 +245,8 @@ def questionnaire_page():
     energy_total_value = safe_float(answers.get("energy_total", 0))
     energy_total_unit = answers.get("energy_total_unit", "kWh")
     energy_total_value = convert_to_kwh(energy_total_value, energy_total_unit)
+    if session_changed:
+        st.session_state["energy_total"] = energy_total_value
     energy_total = st.number_input(
         "总能耗 (kWh)",
         min_value=0.0,
@@ -234,6 +264,8 @@ def questionnaire_page():
         renewable_ratio_value = 0.0
     else:
         renewable_ratio_value = min(max(renewable_ratio_value, 0.0), 100.0)
+    if session_changed:
+        st.session_state["renewable_ratio"] = renewable_ratio_value
     renewable_ratio = st.number_input(
         "可再生能源占比",
         min_value=0.0,
@@ -245,6 +277,8 @@ def questionnaire_page():
     )
     render_conflict("renewable_ratio")
     render_label("hazardous_waste", "危险废弃物总量：______ kg")
+    if session_changed:
+        st.session_state["hazardous_waste"] = safe_float(answers.get("hazardous_waste", 0))
     hazardous_waste = st.number_input(
         "危险废弃物总量",
         min_value=0.0,
@@ -255,6 +289,8 @@ def questionnaire_page():
     )
     render_conflict("hazardous_waste")
     render_label("nonhazardous_waste", "非危险废弃物总量：______ kg")
+    if session_changed:
+        st.session_state["nonhazardous_waste"] = safe_float(answers.get("nonhazardous_waste", 0))
     nonhazardous_waste = st.number_input(
         "非危险废弃物总量",
         min_value=0.0,
@@ -265,6 +301,8 @@ def questionnaire_page():
     )
     render_conflict("nonhazardous_waste")
     render_label("recycled_waste", "回收/再利用废弃物总量：______ kg")
+    if session_changed:
+        st.session_state["recycled_waste"] = safe_float(answers.get("recycled_waste", 0))
     recycled_waste = st.number_input(
         "回收/再利用废弃物总量",
         min_value=0.0,
@@ -278,6 +316,11 @@ def questionnaire_page():
     # 4. 碳管理实践
     st.subheader("碳管理实践")
     render_label("ghg_practice", "关于 GHG 监测和报告实践，以下哪些适用？")
+    if session_changed:
+        st.session_state["ghg_practice"] = normalize_multiselect_defaults(
+            answers.get("ghg_practice", []),
+            options_map["12"],
+        )
     ghg_practice = st.multiselect(
         "GHG 监测/报告",
         options_map["12"],
@@ -286,6 +329,11 @@ def questionnaire_page():
         label_visibility="collapsed"
     )
     render_label("carbon_target", "关于碳减排目标，以下哪些适用？")
+    if session_changed:
+        st.session_state["carbon_target"] = normalize_multiselect_defaults(
+            answers.get("carbon_target", []),
+            options_map["13"],
+        )
     carbon_target = st.multiselect(
         "碳减排目标",
         options_map["13"],
@@ -327,3 +375,5 @@ def questionnaire_page():
             st.success("问卷已保存！")
         else:
             st.error("保存失败")
+    if session_changed:
+        st.session_state["questionnaire_session_id"] = session_id

@@ -7,9 +7,7 @@ def init_chat_sessions():
     # Always try to load from backend
     import requests
     try:
-        import os
-        backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-        response = requests.get(f"{backend_url}/sessions", timeout=5)
+        response = requests.get("http://fastapi-backend:8000/sessions", timeout=5)
         if response.ok:
             sessions = response.json()
             if sessions:
@@ -43,9 +41,7 @@ def init_chat_sessions():
 
 def call_api(endpoint, data=None, files=None, method="POST"):
     import requests
-    import os
-    backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-    url = f"{backend_url}{endpoint}"
+    url = f"http://fastapi-backend:8000{endpoint}"
     if method == "POST":
         return requests.post(url, data=data, files=files)
     elif method == "GET":

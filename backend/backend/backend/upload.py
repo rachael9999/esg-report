@@ -21,9 +21,7 @@ def upload_page():
         ]
         session_id = st.session_state.get("session_id", "default")
         data = {"session_id": session_id}
-        import os
-        backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-        response = requests.post(f"{backend_url}/upload", data=data, files=files)
+        response = requests.post("http://fastapi-backend:8000/upload", data=data, files=files)
         st.session_state["upload_in_progress"] = False
         if response.ok:
             st.session_state["upload_success"] = True

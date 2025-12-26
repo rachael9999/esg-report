@@ -1,5 +1,4 @@
 import streamlit as st
-import os
 import uuid
 from questionnaire import questionnaire_page
 from upload import upload_page
@@ -35,8 +34,7 @@ with st.sidebar:
         if st.button("创建会话", key="create_session_btn"):
             if new_name:
                 import requests
-                backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-                response = requests.post(f"{backend_url}/create_session", data={"name": new_name})
+                response = requests.post("http://fastapi-backend:8000/create_session", data={"name": new_name})
                 if response.ok:
                     data = response.json()
                     new_session_id = data["session_id"]

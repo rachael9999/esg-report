@@ -87,9 +87,7 @@ def questionnaire_page():
     answer_sources = {}
     answer_conflicts = {}
     try:
-        import os
-        backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-        resp = requests.get(f"{backend_url}/questionnaire?session_id={session_id}")
+        resp = requests.get(f"http://fastapi-backend:8000/questionnaire?session_id={session_id}")
         if resp.ok:
             data = resp.json()
             answers = data.get("answers", {})
@@ -368,9 +366,7 @@ def questionnaire_page():
         }
         import requests
         import json
-        import os
-        backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-        response = requests.post(f"{backend_url}/update_answers", data={"session_id": session_id, "answers": json.dumps(updated_answers)})
+        response = requests.post("http://fastapi-backend:8000/update_answers", data={"session_id": session_id, "answers": json.dumps(updated_answers)})
         if response.ok:
             st.success("问卷已保存！即将刷新页面……")
             st.rerun()

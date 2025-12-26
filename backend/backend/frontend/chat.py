@@ -10,9 +10,7 @@ def chat_page():
     # Load history from DB if not loaded
     if not history:
         import requests
-        import os
-        backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-        response = requests.get(f"{backend_url}/chats?session_id={session_id}")
+        response = requests.get(f"http://fastapi-backend:8000/chats?session_id={session_id}")
         if response.ok:
             chats = response.json()
             for chat in chats:
@@ -23,9 +21,7 @@ def chat_page():
     if st.button("发送", key="send_btn") and user_input:
         import requests
         data = {"message": user_input, "session_id": session_id}
-        import os
-        backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-        response = requests.post(f"{backend_url}/chat", data=data)
+        response = requests.post("http://fastapi-backend:8000/chat", data=data)
         if response.ok:
             data = response.json()
             ai_response = data.get("response", "")

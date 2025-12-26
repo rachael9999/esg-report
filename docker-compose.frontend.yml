@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  frontend:
+    image: streamlit-frontend:latest
+    container_name: streamlit-frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./frontend:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped

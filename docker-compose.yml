@@ -1,0 +1,44 @@
+version: '3.8'
+services:
+  db:
+    image: ankane/pgvector
+    container_name: postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: esg_memory
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    container_name: fastapi-backend
+    command: uvicorn app:app --host ${BACKEND_HOST:-0.0.0.0} --port ${BACKEND_PORT:-8000}
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: admin
+      PGPASSWORD: admin
+      PGDATABASE: esg_memory
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    container_name: streamlit-frontend
+    command: streamlit run app.py --server.port ${FRONTEND_PORT:-8501} --server.address ${FRONTEND_HOST:-0.0.0.0}
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

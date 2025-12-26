@@ -13,3 +13,4 @@ python-multipart
 pdfplumber
 dashscope
 langchain-postgres
+mineru

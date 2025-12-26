@@ -27,13 +27,42 @@ def update_from_document(session_id, files=None):
     if files:
         splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
         for file in files:
+            docs = []
             if file.endswith('.pdf'):
-                loader = PDFPlumberLoader(file)
+                # 1. mineru 提取表格
+                try:
+                    import mineru
+                    pdf_tables = mineru.read_pdf(file)
+                    for i, df in enumerate(pdf_tables):
+                        table_text = df.to_string(index=False)
+                        from langchain_core.documents import Document
+                        doc = Document(page_content=table_text, metadata={"source_file": os.path.basename(file), "table_index": i, "type": "table"})
+                        docs.append(doc)
+                except Exception as e:
+                    print(f"mineru 解析失败: {e}")
+                # 2. pdfplumber 提取每页文本
+                try:
+                    import pdfplumber
+                    from langchain_core.documents import Document
+                    with pdfplumber.open(file) as pdf:
+                        for i, page in enumerate(pdf.pages):
+                            page_text = page.extract_text() or ""
+                            doc = Document(page_content=page_text, metadata={"source_file": os.path.basename(file), "page": i, "type": "text"})
+                            docs.append(doc)
+                except Exception as e:
+                    print(f"pdfplumber 解析失败: {e}, 尝试 PDFPlumberLoader")
+                    loader = PDFPlumberLoader(file)
+                    text_docs = loader.load()
+                    for doc in text_docs:
+                        doc.metadata["source_file"] = os.path.basename(file)
+                        doc.metadata["type"] = "text"
+                    docs.extend(text_docs)
             elif file.endswith('.docx'):
                 loader = Docx2txtLoader(file)
+                docs = loader.load()
             else:
                 loader = TextLoader(file)
-            docs = loader.load()
+                docs = loader.load()
             for doc in docs:
                 doc.metadata["source_file"] = os.path.basename(file)
             chunks = splitter.split_documents(docs)

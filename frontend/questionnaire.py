@@ -2,6 +2,39 @@ import streamlit as st
 import html
 
 def questionnaire_page():
+    # --- Unit conversion helpers ---
+    def convert_to_ton_co2(value, unit):
+        """
+        Convert value to ton CO2 equivalent.
+        Supported units: 'kg', '吨', 't', 'ton', 'kg CO2', 't CO2', 'ton CO2'
+        """
+        unit = str(unit).lower().replace(' ', '')
+        if unit in ['kg', 'kgco2']:
+            return value / 1000.0
+        elif unit in ['吨', 't', 'ton', 'tco2', 'tonco2']:
+            return value
+        else:
+            return value  # fallback, assume already in ton
+
+    def convert_to_kwh(value, unit):
+        """
+        Convert value to kWh.
+        Supported units: 'mj', 'gj', 'wh', 'kwh', 'mwh'
+        """
+        unit = str(unit).lower().replace(' ', '')
+        if unit == 'mj':
+            return value / 3.6
+        elif unit == 'gj':
+            return value * 277.78
+        elif unit == 'wh':
+            return value / 1000.0
+        elif unit == 'mwh':
+            return value * 1000.0
+        elif unit == 'kwh':
+            return value
+        else:
+            return value  # fallback, assume already in kWh
+
     st.header("环境政策")
     options_map = {
         "0": [
@@ -59,11 +92,16 @@ def questionnaire_page():
     def render_conflict(field_key):
         conflict_items = answer_conflicts.get(field_key, [])
         if conflict_items:
-            details = "\n".join(
-                f"- {item.get('value')}（{item.get('source', '未知来源')}）"
-                for item in conflict_items
-            )
-            st.warning(f"检测到多个来源存在冲突，请确认：\n{details}")
+            st.warning("检测到多个来源存在冲突，请展开查看详情。")
+            with st.expander("查看冲突详情"):
+                details = "\n".join(
+                    f"- <b>{item.get('value')}</b>（{item.get('source', '未知来源')}）"
+                    for item in conflict_items
+                )
+                st.markdown(
+                    f"<div style='word-break: break-all; white-space: pre-wrap;'>{details}</div>",
+                    unsafe_allow_html=True
+                )
     def normalize_multiselect_defaults(value, options):
         if not value:
             return []
@@ -127,51 +165,70 @@ def questionnaire_page():
             return default
 
     render_label("scope1", "Scope 1 (直接排放)：______ 吨 CO2 当量")
+    scope1_value = safe_float(answers.get("scope1", 0))
+    scope1_unit = answers.get("scope1_unit", "吨")  # default to 吨
+    scope1_value = convert_to_ton_co2(scope1_value, scope1_unit)
     scope1 = st.number_input(
-        "Scope 1",
+        "Scope 1 (吨 CO2)",
         min_value=0.0,
-        value=safe_float(answers.get("scope1", 0)),
+        value=scope1_value,
         format="%.2f",
         key="scope1",
         label_visibility="collapsed"
     )
     render_conflict("scope1")
     render_label("scope2", "Scope 2 (能源间接排放)：______ 吨 CO2 当量")
+    scope2_value = safe_float(answers.get("scope2", 0))
+    scope2_unit = answers.get("scope2_unit", "吨")
+    scope2_value = convert_to_ton_co2(scope2_value, scope2_unit)
     scope2 = st.number_input(
-        "Scope 2",
+        "Scope 2 (吨 CO2)",
         min_value=0.0,
-        value=safe_float(answers.get("scope2", 0)),
+        value=scope2_value,
         format="%.2f",
         key="scope2",
         label_visibility="collapsed"
     )
     render_conflict("scope2")
     render_label("scope3", "Scope 3 (上下游其他间接排放)：______ 吨 CO2 当量")
+    scope3_value = safe_float(answers.get("scope3", 0))
+    scope3_unit = answers.get("scope3_unit", "吨")
+    scope3_value = convert_to_ton_co2(scope3_value, scope3_unit)
     scope3 = st.number_input(
-        "Scope 3",
+        "Scope 3 (吨 CO2)",
         min_value=0.0,
-        value=safe_float(answers.get("scope3", 0)),
+        value=scope3_value,
         format="%.2f",
         key="scope3",
         label_visibility="collapsed"
     )
     render_conflict("scope3")
     render_label("energy_total", "总能耗：______ kWh")
+    energy_total_value = safe_float(answers.get("energy_total", 0))
+    energy_total_unit = answers.get("energy_total_unit", "kWh")
+    energy_total_value = convert_to_kwh(energy_total_value, energy_total_unit)
     energy_total = st.number_input(
-        "总能耗",
+        "总能耗 (kWh)",
         min_value=0.0,
-        value=safe_float(answers.get("energy_total", 0)),
+        value=energy_total_value,
         format="%.2f",
         key="energy_total",
         label_visibility="collapsed"
     )
     render_conflict("energy_total")
     render_label("renewable_ratio", "可再生能源占比：______ %")
+    renewable_ratio_value = safe_float(answers.get("renewable_ratio", 0))
+    if renewable_ratio_value < 0.0:
+        renewable_ratio_value = 0.0
+    elif renewable_ratio_value > 100.0:
+        renewable_ratio_value = 0.0
+    else:
+        renewable_ratio_value = min(max(renewable_ratio_value, 0.0), 100.0)
     renewable_ratio = st.number_input(
         "可再生能源占比",
         min_value=0.0,
         max_value=100.0,
-        value=safe_float(answers.get("renewable_ratio", 0)),
+        value=renewable_ratio_value,
         format="%.2f",
         key="renewable_ratio",
         label_visibility="collapsed"

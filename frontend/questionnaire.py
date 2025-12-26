@@ -2,6 +2,16 @@ import streamlit as st
 import html
 
 def questionnaire_page():
+    # --- Session ID change detection ---
+    if 'last_session_id' not in st.session_state:
+        st.session_state['last_session_id'] = st.session_state.get('session_id', 'default')
+    if st.session_state.get('session_id', 'default') != st.session_state['last_session_id']:
+        # 清空所有问卷相关字段
+        for key in list(st.session_state.keys()):
+            if key not in ('session_id', 'last_session_id'):
+                del st.session_state[key]
+        st.session_state['last_session_id'] = st.session_state.get('session_id', 'default')
+        st.rerun()
     # --- Unit conversion helpers ---
     def convert_to_ton_co2(value, unit):
         """

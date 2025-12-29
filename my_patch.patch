@@ -1,0 +1,374 @@
+diff --git a/backend/app.py b/backend/app.py
+index 6979e3df7ff36c98deed933908bc95dcffa211f3..b06fef310546e408546a3d5b04a8ddb2eb8dfe15 100644
+--- a/backend/app.py
++++ b/backend/app.py
+@@ -116,44 +116,80 @@ async def update_answers(session_id: str = Form(...), answers: str = Form(...)):
+             row = cur.fetchone()
+             if row:
+                 answer_id, existing = row
+                 if existing and isinstance(existing, str):
+                     existing = json.loads(existing)
+                 source_data = {}
+                 conflict_data = {}
+                 if isinstance(existing, dict):
+                     source_data = existing.get("_sources", {})
+                     conflict_data = existing.get("_conflicts", {})
+                 updated = json.loads(answers)
+                 if isinstance(updated, dict):
+                     updated["_sources"] = source_data
+                     updated["_conflicts"] = conflict_data
+                 cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(updated), answer_id))
+             else:
+                 cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, answers))
+     conn.close()
+     return {"status": "updated"}
+ 
+ @app.get("/chats")
+ async def get_chats(request: Request):
+     session_id = request.query_params.get("session_id")
+     if not session_id:
+         return {"error": "session_id required"}
++    import json
+     from db.db import get_conn
++    def parse_message(raw_message):
++        message = raw_message
++        if isinstance(message, str):
++            try:
++                message = json.loads(message)
++            except json.JSONDecodeError:
++                return {"type": "unknown", "content": message}
++        if not isinstance(message, dict):
++            return {"type": "unknown", "content": str(message)}
++        data = message.get("data", {})
++        if isinstance(data, str):
++            try:
++                data = json.loads(data)
++            except json.JSONDecodeError:
++                data = {"content": data}
++        content = None
++        if isinstance(data, dict):
++            content = data.get("content")
++        if content is None:
++            content = message.get("content")
++        return {"type": message.get("type") or message.get("role"), "content": content}
++
+     conn = get_conn()
+     with conn:
+         with conn.cursor() as cur:
+-            cur.execute("SELECT user_input, ai_response FROM chats WHERE session_id=%s ORDER BY created_at", (session_id,))
++            cur.execute("SELECT message FROM chat_history WHERE session_id=%s ORDER BY created_at", (session_id,))
+             rows = cur.fetchall()
+     conn.close()
+-    return [{"user_input": row[0], "ai_response": row[1]} for row in rows]
++    history = []
++    pending_user = None
++    for (message,) in rows:
++        parsed = parse_message(message)
++        msg_type = parsed.get("type")
++        content = parsed.get("content") or ""
++        if msg_type in ("human", "user"):
++            pending_user = content
++        elif msg_type in ("ai", "assistant"):
++            if pending_user is None:
++                pending_user = ""
++            history.append({"user_input": pending_user, "ai_response": content})
++            pending_user = None
++    return history
+ 
+ @app.get("/sessions")
+ async def get_sessions():
+     from db.db import get_conn
+     conn = get_conn()
+     with conn:
+         with conn.cursor() as cur:
+             cur.execute("SELECT id, name FROM sessions ORDER BY created_at DESC")
+             rows = cur.fetchall()
+     conn.close()
+     return [{"id": row[0], "name": row[1]} for row in rows]
+diff --git a/backend/backend/app.py b/backend/backend/app.py
+index 6979e3df7ff36c98deed933908bc95dcffa211f3..b06fef310546e408546a3d5b04a8ddb2eb8dfe15 100644
+--- a/backend/backend/app.py
++++ b/backend/backend/app.py
+@@ -116,44 +116,80 @@ async def update_answers(session_id: str = Form(...), answers: str = Form(...)):
+             row = cur.fetchone()
+             if row:
+                 answer_id, existing = row
+                 if existing and isinstance(existing, str):
+                     existing = json.loads(existing)
+                 source_data = {}
+                 conflict_data = {}
+                 if isinstance(existing, dict):
+                     source_data = existing.get("_sources", {})
+                     conflict_data = existing.get("_conflicts", {})
+                 updated = json.loads(answers)
+                 if isinstance(updated, dict):
+                     updated["_sources"] = source_data
+                     updated["_conflicts"] = conflict_data
+                 cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(updated), answer_id))
+             else:
+                 cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, answers))
+     conn.close()
+     return {"status": "updated"}
+ 
+ @app.get("/chats")
+ async def get_chats(request: Request):
+     session_id = request.query_params.get("session_id")
+     if not session_id:
+         return {"error": "session_id required"}
++    import json
+     from db.db import get_conn
++    def parse_message(raw_message):
++        message = raw_message
++        if isinstance(message, str):
++            try:
++                message = json.loads(message)
++            except json.JSONDecodeError:
++                return {"type": "unknown", "content": message}
++        if not isinstance(message, dict):
++            return {"type": "unknown", "content": str(message)}
++        data = message.get("data", {})
++        if isinstance(data, str):
++            try:
++                data = json.loads(data)
++            except json.JSONDecodeError:
++                data = {"content": data}
++        content = None
++        if isinstance(data, dict):
++            content = data.get("content")
++        if content is None:
++            content = message.get("content")
++        return {"type": message.get("type") or message.get("role"), "content": content}
++
+     conn = get_conn()
+     with conn:
+         with conn.cursor() as cur:
+-            cur.execute("SELECT user_input, ai_response FROM chats WHERE session_id=%s ORDER BY created_at", (session_id,))
++            cur.execute("SELECT message FROM chat_history WHERE session_id=%s ORDER BY created_at", (session_id,))
+             rows = cur.fetchall()
+     conn.close()
+-    return [{"user_input": row[0], "ai_response": row[1]} for row in rows]
++    history = []
++    pending_user = None
++    for (message,) in rows:
++        parsed = parse_message(message)
++        msg_type = parsed.get("type")
++        content = parsed.get("content") or ""
++        if msg_type in ("human", "user"):
++            pending_user = content
++        elif msg_type in ("ai", "assistant"):
++            if pending_user is None:
++                pending_user = ""
++            history.append({"user_input": pending_user, "ai_response": content})
++            pending_user = None
++    return history
+ 
+ @app.get("/sessions")
+ async def get_sessions():
+     from db.db import get_conn
+     conn = get_conn()
+     with conn:
+         with conn.cursor() as cur:
+             cur.execute("SELECT id, name FROM sessions ORDER BY created_at DESC")
+             rows = cur.fetchall()
+     conn.close()
+     return [{"id": row[0], "name": row[1]} for row in rows]
+diff --git a/backend/backend/esg_graph.py b/backend/backend/esg_graph.py
+index 076b9514a10399eeeb50d38ad2e587fab6c370e3..2aaa483c163c2bbd0dff005fecc2e6218af7c5c4 100644
+--- a/backend/backend/esg_graph.py
++++ b/backend/backend/esg_graph.py
+@@ -159,48 +159,84 @@ async def update_answers(session_id: str = Form(...), answers: str = Form(...)):
+         with conn.cursor() as cur:
+             cur.execute("SELECT id, answers FROM answers WHERE session_id=%s ORDER BY created_at DESC LIMIT 1", (session_id,))
+             row = cur.fetchone()
+             if row:
+                 answer_id, existing = row
+                 if existing and isinstance(existing, str):
+                     existing = json.loads(existing)
+                 source_data = {}
+                 conflict_data = {}
+                 if isinstance(existing, dict):
+                     source_data = existing.get("_sources", {})
+                     conflict_data = existing.get("_conflicts", {})
+                 updated = json.loads(answers)
+                 if isinstance(updated, dict):
+                     updated["_sources"] = source_data
+                     updated["_conflicts"] = conflict_data
+                 cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(updated), answer_id))
+             else:
+                 cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, answers))
+     conn.close()
+     return {"status": "updated"}
+ 
+ @app.get("/chats")
+ async def get_chats(request: Request):
+     session_id = request.query_params.get("session_id")
++    import json
+     from db.db import get_conn
++    def parse_message(raw_message):
++        message = raw_message
++        if isinstance(message, str):
++            try:
++                message = json.loads(message)
++            except json.JSONDecodeError:
++                return {"type": "unknown", "content": message}
++        if not isinstance(message, dict):
++            return {"type": "unknown", "content": str(message)}
++        data = message.get("data", {})
++        if isinstance(data, str):
++            try:
++                data = json.loads(data)
++            except json.JSONDecodeError:
++                data = {"content": data}
++        content = None
++        if isinstance(data, dict):
++            content = data.get("content")
++        if content is None:
++            content = message.get("content")
++        return {"type": message.get("type") or message.get("role"), "content": content}
++
+     conn = get_conn()
+     with conn:
+         with conn.cursor() as cur:
+-            cur.execute("SELECT user_input, ai_response FROM chats WHERE session_id=%s ORDER BY created_at", (session_id,))
++            cur.execute("SELECT message FROM chat_history WHERE session_id=%s ORDER BY created_at", (session_id,))
+             rows = cur.fetchall()
+     conn.close()
+-    return [{"user_input": row[0], "ai_response": row[1]} for row in rows]
++    history = []
++    pending_user = None
++    for (message,) in rows:
++        parsed = parse_message(message)
++        msg_type = parsed.get("type")
++        content = parsed.get("content") or ""
++        if msg_type in ("human", "user"):
++            pending_user = content
++        elif msg_type in ("ai", "assistant"):
++            if pending_user is None:
++                pending_user = ""
++            history.append({"user_input": pending_user, "ai_response": content})
++            pending_user = None
++    return history
+ 
+ @app.get("/sessions")
+ async def get_sessions():
+     from db.db import get_conn
+     conn = get_conn()
+     with conn:
+         with conn.cursor() as cur:
+             cur.execute("SELECT id, name FROM sessions ORDER BY created_at DESC")
+             rows = cur.fetchall()
+     conn.close()
+     return [{"id": row[0], "name": row[1]} for row in rows]
+ 
+ if __name__ == "__main__":
+     import uvicorn
+     uvicorn.run(app, host="0.0.0.0", port=8000)
+diff --git a/backend/esg_graph.py b/backend/esg_graph.py
+index 0a378746f2829c41bc0ed44b17cf8310ed5b3cbd..165f8df45ffce409e5d9b840a0a852f4978b6aab 100644
+--- a/backend/esg_graph.py
++++ b/backend/esg_graph.py
+@@ -159,66 +159,92 @@ async def update_answers(session_id: str = Form(...), answers: str = Form(...)):
+         with conn.cursor() as cur:
+             cur.execute("SELECT id, answers FROM answers WHERE session_id=%s ORDER BY created_at DESC LIMIT 1", (session_id,))
+             row = cur.fetchone()
+             if row:
+                 answer_id, existing = row
+                 if existing and isinstance(existing, str):
+                     existing = json.loads(existing)
+                 source_data = {}
+                 conflict_data = {}
+                 if isinstance(existing, dict):
+                     source_data = existing.get("_sources", {})
+                     conflict_data = existing.get("_conflicts", {})
+                 updated = json.loads(answers)
+                 if isinstance(updated, dict):
+                     updated["_sources"] = source_data
+                     updated["_conflicts"] = conflict_data
+                 cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(updated), answer_id))
+             else:
+                 cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, answers))
+     conn.close()
+     return {"status": "updated"}
+ 
+ @app.get("/chats")
+ async def get_chats(request: Request):
+     session_id = request.query_params.get("session_id")
++    import json
+     from db.db import get_conn
++    def parse_message(raw_message):
++        message = raw_message
++        if isinstance(message, str):
++            try:
++                message = json.loads(message)
++            except json.JSONDecodeError:
++                return {"type": "unknown", "content": message}
++        if not isinstance(message, dict):
++            return {"type": "unknown", "content": str(message)}
++        data = message.get("data", {})
++        if isinstance(data, str):
++            try:
++                data = json.loads(data)
++            except json.JSONDecodeError:
++                data = {"content": data}
++        content = None
++        if isinstance(data, dict):
++            content = data.get("content")
++        if content is None:
++            content = message.get("content")
++        return {"type": message.get("type") or message.get("role"), "content": content}
++
+     conn = get_conn()
+     with conn:
+         with conn.cursor() as cur:
+-            cur.execute("SELECT user_input, ai_response FROM chats WHERE session_id=%s ORDER BY created_at", (session_id,))
++            cur.execute("SELECT message FROM chat_history WHERE session_id=%s ORDER BY created_at", (session_id,))
+             rows = cur.fetchall()
+     conn.close()
+-    return [{"user_input": row[0], "ai_response": row[1]} for row in rows]
++    history = []
++    pending_user = None
++    for (message,) in rows:
++        parsed = parse_message(message)
++        msg_type = parsed.get("type")
++        content = parsed.get("content") or ""
++        if msg_type in ("human", "user"):
++            pending_user = content
++        elif msg_type in ("ai", "assistant"):
++            if pending_user is None:
++                pending_user = ""
++            history.append({"user_input": pending_user, "ai_response": content})
++            pending_user = None
++    return history
+ 
+ @app.get("/sessions")
+ async def get_sessions():
+     from db.db import get_conn
+     conn = get_conn()
+     with conn:
+         with conn.cursor() as cur:
+             cur.execute("SELECT id, name FROM sessions ORDER BY created_at DESC")
+             rows = cur.fetchall()
+     conn.close()
+     return [{"id": row[0], "name": row[1]} for row in rows]
+ 
+ def stream_chat(message, session_id):
+     agent_executor, chat_history = build_agent(session_id)
+     ai_response = ""
+     for chunk in agent_executor.stream({"input": message}):
+         content = getattr(chunk, "content", str(chunk))
+         ai_response += content
+         yield content
+-    # 保存历史
+-    from db.db import get_conn
+-    conn = get_conn()
+-    with conn:
+-        with conn.cursor() as cur:
+-            cur.execute(
+-                "INSERT INTO chats (session_id, user_input, ai_response) VALUES (%s, %s, %s)",
+-                (session_id, message, ai_response)
+-            )
+-    conn.close()
+ 
+ if __name__ == "__main__":
+     import uvicorn
+     uvicorn.run(app, host="0.0.0.0", port=8000)

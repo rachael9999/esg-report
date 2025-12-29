@@ -71,7 +71,6 @@ def build_agent(session_id):
 
 async def handle_chat(message, session_id):
     from chains.questionnaire_chain import get_questionnaire
-    # 获取更新前的问卷内容
     old_answers = get_questionnaire(session_id).get("answers", {}).copy()
     agent_executor, chat_history = build_agent(session_id)
     try:

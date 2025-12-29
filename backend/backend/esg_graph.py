@@ -181,14 +181,50 @@ async def update_answers(session_id: str = Form(...), answers: str = Form(...)):
 @app.get("/chats")
 async def get_chats(request: Request):
     session_id = request.query_params.get("session_id")
+    import json
     from db.db import get_conn
+    def parse_message(raw_message):
+        message = raw_message
+        if isinstance(message, str):
+            try:
+                message = json.loads(message)
+            except json.JSONDecodeError:
+                return {"type": "unknown", "content": message}
+        if not isinstance(message, dict):
+            return {"type": "unknown", "content": str(message)}
+        data = message.get("data", {})
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                data = {"content": data}
+        content = None
+        if isinstance(data, dict):
+            content = data.get("content")
+        if content is None:
+            content = message.get("content")
+        return {"type": message.get("type") or message.get("role"), "content": content}
+
     conn = get_conn()
     with conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT user_input, ai_response FROM chats WHERE session_id=%s ORDER BY created_at", (session_id,))
+            cur.execute("SELECT message FROM chat_history WHERE session_id=%s ORDER BY created_at", (session_id,))
             rows = cur.fetchall()
     conn.close()
-    return [{"user_input": row[0], "ai_response": row[1]} for row in rows]
+    history = []
+    pending_user = None
+    for (message,) in rows:
+        parsed = parse_message(message)
+        msg_type = parsed.get("type")
+        content = parsed.get("content") or ""
+        if msg_type in ("human", "user"):
+            pending_user = content
+        elif msg_type in ("ai", "assistant"):
+            if pending_user is None:
+                pending_user = ""
+            history.append({"user_input": pending_user, "ai_response": content})
+            pending_user = None
+    return history
 
 @app.get("/sessions")
 async def get_sessions():

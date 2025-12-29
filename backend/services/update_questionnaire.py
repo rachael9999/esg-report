@@ -1,5 +1,3 @@
-
-# RAG 检索每个问卷问题并自动更新 answers
 import os
 import json
 from db.db import get_conn
@@ -222,7 +220,9 @@ def update_from_document(session_id, files=None):
                 print(f"AI Response: {value}")
 
                 if qtype == "float":
-                    match = re.search(r"[-+]?[0-9]*\.?[0-9]+", value)
+                    # 先去掉千分位逗号，保证能正确提取如86,543.13
+                    value_clean = value.replace(",", "")
+                    match = re.search(r"[-+]?[0-9]*\.?[0-9]+", value_clean)
                     if match:
                         values.append(float(match.group()))
                         sources.append(format_source(doc.metadata))
@@ -328,7 +328,13 @@ def update_from_chat(session_id, message):
     llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(api_key))
 
     # prompt: 让 AI 把 message 转成问卷 JSON
-    prompt = f"你是ESG问卷助手。请根据用户输入，将相关信息以JSON格式输出。例如：{{'scope1': 500}}。只输出JSON，不要解释。\n用户输入：{message}"
+    prompt = (
+        "你是ESG问卷助手。请根据用户输入，将相关信息以JSON格式输出。"
+        "字段名请用英文（scope1, scope2, scope3, energy_total, ...），"
+        "支持用户用“范围一/范围二/范围三/Scope1/Scope2/Scope3”等中文或英文表达，"
+        "自动映射到正确字段。"
+        "例如：{'scope1': 500}。只输出JSON，不要解释。\n用户输入：" + message
+    )
     ai_result = llm.invoke(prompt)
     # 提取 JSON 字符串
     if isinstance(ai_result, dict) and "content" in ai_result:
@@ -353,6 +359,14 @@ def update_from_chat(session_id, message):
                 answer_update[key] = None
     except Exception:
         return
+
+    mapping = {
+        "范围一": "scope1", "范围二": "scope2", "范围三": "scope3",
+        "Scope1": "scope1", "Scope2": "scope2", "Scope3": "scope3"
+    }
+    for k in list(answer_update.keys()):
+        if k in mapping:
+            answer_update[mapping[k]] = answer_update.pop(k)
 
     # 更新 answers 表
     conn = get_conn()

@@ -22,21 +22,30 @@ def questionnaire_page():
             "ghg_practice",
             "carbon_target",
         ]
-        for key in questionnaire_keys:
-            st.session_state.pop(key, None)
-    # --- Unit conversion helpers ---
-    def convert_to_ton_co2(value, unit):
-        """
-        Convert value to ton CO2 equivalent.
-        Supported units: 'kg', '吨', 't', 'ton', 'kg CO2', 't CO2', 'ton CO2'
-        """
-        unit = str(unit).lower().replace(' ', '')
-        if unit in ['kg', 'kgco2']:
-            return value / 1000.0
-        elif unit in ['吨', 't', 'ton', 'tco2', 'tonco2']:
-            return value
+        review_msg = None
+        try:
+            import requests
+            import os
+            backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
+            resp = requests.get(f"{backend_url}/questionnaire?session_id={session_id}")
+            if resp.ok:
+                data = resp.json()
+                answers = data.get("answers", {})
+                rag_contexts = data.get("rag_contexts", {})
+                summary = data.get("summary", "")
+                answer_sources = data.get("answer_sources", {}) or answers.get("_sources", {})
+                answer_conflicts = data.get("answer_conflicts", {}) or answers.get("_conflicts", {})
+                if "review" in data:
+                    review_msg = data["review"]
+        except Exception as e:
+            st.error(f"问卷接口异常: {e}")
+
+        # 页面顶部统一展示审核结果
+        if review_msg:
+            st.warning(f"审核结果：{review_msg}")
+            return
         else:
-            return value  # fallback, assume already in ton
+            pass  # fallback, assume already in ton
 
     def convert_to_kwh(value, unit):
         """
@@ -56,6 +65,49 @@ def questionnaire_page():
             return value
         else:
             return value  # fallback, assume already in kWh
+
+    def convert_to_ton_co2(value, unit):
+        """
+        Convert value to tons of CO2 equivalent.
+        Supported units: 'kg', '吨', 't', 'ton', 'tons'
+        """
+        unit = str(unit).lower().replace(' ', '')
+        if unit in ['kg']:
+            return value / 1000.0
+        elif unit in ['吨', 't', 'ton', 'tons']:
+            return value
+        elif unit in ['g']:
+            return value / 1_000_000.0
+        elif unit in ['mg']:
+            return value / 1_000_000_000.0
+        elif unit in ['lb', 'lbs', 'pound', 'pounds']:
+            return value * 0.000453592
+        elif unit in ['oz', 'ounce', 'ounces']:
+            return value * 0.0000283495
+        elif unit in ['st']:
+            return value * 6.35029
+        elif unit in ['metricton', 'metrictone']:
+            return value
+        elif unit in ['shortton', 'us ton']:
+            return value * 0.907185
+        elif unit in ['longton', 'imperial ton']:
+            return value * 1.01605
+        elif unit in ['gton', 'gigaton']:
+            return value * 1_000_000_000.0
+        elif unit in ['mton', 'megaton']:
+            return value * 1_000_000.0
+        elif unit in ['kt', 'kiloton']:
+            return value * 1000.0   
+        elif unit in ['lbm']:
+            return value * 0.000453592
+        elif unit in ['slug']:
+            return value * 14.5939
+        elif unit in ['grain']:
+            return value * 0.00000006479891
+        elif unit in ['carat']:
+            return value * 0.0000002
+        else:
+            return value  # fallback, assume already in tons
 
     st.header("环境政策")
     options_map = {
@@ -97,6 +149,9 @@ def questionnaire_page():
             summary = data.get("summary", "")
             answer_sources = data.get("answer_sources", {}) or answers.get("_sources", {})
             answer_conflicts = data.get("answer_conflicts", {}) or answers.get("_conflicts", {})
+            # 展示审核结果
+            if "review" in data:
+                st.warning(f"审核结果：{data['review']}")
     except Exception:
         pass
 
@@ -148,8 +203,6 @@ def questionnaire_page():
         label_visibility="collapsed"
     )
     render_label("quantitative_target", "政策中是否包含定量目标？(需提供目标数值与年份)")
-    if session_changed:
-        st.session_state["quantitative_target"] = answers.get("quantitative_target", "")
     quantitative_target = st.text_input(
         "定量目标",
         value=answers.get("quantitative_target", ""),

@@ -52,3 +52,11 @@ CREATE TABLE IF NOT EXISTS chats (
     ai_response TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 用于 langchain_postgres 的聊天历史表
+CREATE TABLE IF NOT EXISTS chat_history (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(128) NOT NULL,
+    message JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

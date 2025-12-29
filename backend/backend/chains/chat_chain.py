@@ -1,111 +1,110 @@
 from services.update_questionnaire import update_from_chat
-from db.db import get_conn
 import os
 from langchain_community.chat_models import ChatTongyi
 from pydantic import SecretStr
 from dotenv import load_dotenv
+import uuid
+
+from langchain_postgres.chat_message_histories import PostgresChatMessageHistory
+from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware
+from langchain_core.tools import Tool
+import psycopg
+from fastapi.responses import StreamingResponse
 
 load_dotenv()
-# Ensure the DASHSCOPE_API_KEY is loaded
 api_key = os.environ.get("DASHSCOPE_API_KEY")
-if not api_key:
+if api_key is None or not isinstance(api_key, str) or not api_key.strip():
     raise ValueError("DASHSCOPE_API_KEY is missing. Please set it in the `.env` file.")
 
-llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(api_key))
 
-def get_ai_response(message, session_id):
-    # 调用 ChatTongyi 获取 AI 回复
+def build_agent(session_id):
+    # 确保 session_id 是 UUID 字符串
     try:
-        response = llm.invoke(message)
-        return response
-    except Exception as e:
-        return f"AI服务异常：{e}"
+        session_id = str(uuid.UUID(str(session_id)))
+    except Exception:
+        session_id = str(uuid.uuid4())
 
-async def handle_chat(message, session_id):
-    # 1. 检索问卷answers
-    from chains.questionnaire_chain import get_questionnaire
-    answers = get_questionnaire(session_id).get("answers", {})
-
-    # 1.5 获取最近5条历史聊天内容，拼接为多轮上下文
-    chat_history = []
-    conn = get_conn()
-    with conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT user_input, ai_response FROM chats WHERE session_id=%s ORDER BY id DESC LIMIT 5",
-                (session_id,)
-            )
-            rows = cur.fetchall()
-            # 倒序排列，最早的在前
-            for row in reversed(rows):
-                chat_history.append({"user": row[0], "ai": row[1]})
-    conn.close()
-
-    # 2. RAG文档检索
-    from langchain_postgres.vectorstores import PGVector
-    from langchain_community.embeddings import DashScopeEmbeddings
-    import os
-    from dotenv import load_dotenv
-    load_dotenv()
-    api_key = os.environ.get("DASHSCOPE_API_KEY")
-    rag_result = ""
-    sources = []
-    try:
+    llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(str(api_key)))
+    summarization_llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(str(api_key)))
+    # 工具：RAG 检索
+    def rag_tool_func(input, session_id=None):
+        from langchain_postgres.vectorstores import PGVector
+        from langchain_community.embeddings import DashScopeEmbeddings
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        api_key = os.environ.get("DASHSCOPE_API_KEY")
         embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
         vectorstore = PGVector(
-            connection_string=os.getenv("PGVECTOR_CONN", "postgresql+psycopg2://admin:admin@db:5432/postgres"),
-            embedding_function=embeddings,
+            embeddings,
+            connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres"),
             collection_name=f"session_{session_id}",
-            use_jsonb_metadata=True
+            use_jsonb=True
         )
-        docs = vectorstore.similarity_search(message, k=2)
-        sources = []
+        docs = vectorstore.similarity_search(input, k=2)
         if docs:
-            rag_result = "\n\n".join([d.page_content for d in docs])
-            for d in docs:
-                source = d.metadata.get('source', 'Unknown')
-                if '/' in source or '\\' in source:
-                    source = source.split('/')[-1].split('\\')[-1]
-                page = d.metadata.get('page', 'N/A')
-                sources.append(f"{source}: 页 {page}")
-        else:
-            rag_result = ""
-    except Exception:
-        pass
-
-
-    # 3. 组织AI prompt，融合历史对话、问卷和RAG，并在最前面加“本轮目标”
-    history_str = ""
-    if chat_history:
-        for idx, turn in enumerate(chat_history):
-            history_str += f"\n[用户]{turn['user']}\n[AI]{turn['ai']}\n"
-    # 概括本轮目标
-    goal_str = f"本轮目标：请聚焦于用户最新问题“{message}”，确保回答紧扣本轮需求，不被历史上下文干扰。"
-    prompt = (
-        goal_str +
-        "\n你是ESG问卷智能助手。请结合历史对话、问卷信息和文档片段，专业、简明地回答用户。"
-        f"\n\n【历史对话】:{history_str}\n\n用户问题：{message}\n\n【问卷已知信息】：{answers}\n\n【相关文档片段】：{rag_result}"
+            return "\n\n".join([d.page_content for d in docs])
+        return ""
+    rag_tool = Tool(
+        name="RAG检索",
+        func=lambda input: rag_tool_func(input, session_id),
+        description="根据用户问题检索相关文档片段"
     )
-    ai_response = get_ai_response(prompt, session_id)
-    if hasattr(ai_response, "content"):
-        ai_response_str = ai_response.content
-    else:
-        ai_response_str = str(ai_response)
+    tools = [rag_tool]
+    pg_url = os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres")
+    # 创建 sync_connection
+    sync_connection = psycopg.connect(pg_url)
+    chat_history = PostgresChatMessageHistory(
+        "chat_history",
+        session_id,
+        sync_connection=sync_connection
+    )
+    agent_executor = create_agent(
+        model=llm,
+        tools=tools,
+        system_prompt="你是ESG问卷智能助手。请结合历史对话、问卷信息和文档片段，专业、简明地回答用户。",
+        middleware=[SummarizationMiddleware(model=summarization_llm, trigger=("tokens", 4000), keep=("messages", 20))],
+    )
+    return agent_executor, chat_history
 
-    # 聊天记录存储到 Postgres
-    conn = get_conn()
-    with conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO sessions (id, session_token) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-                (session_id, session_id)
-            )
-            cur.execute(
-                "INSERT INTO chats (session_id, user_input, ai_response) VALUES (%s, %s, %s)",
-                (session_id, message, ai_response_str)
-            )
-    conn.close()
 
-    # 自动更新问卷
+async def handle_chat(message, session_id):
+    from chains.questionnaire_chain import get_questionnaire
+    # 获取更新前的问卷内容
+    old_answers = get_questionnaire(session_id).get("answers", {}).copy()
+    agent_executor, chat_history = build_agent(session_id)
+    try:
+        result = agent_executor.invoke({"input": message})
+        # 提取 AI 真实回复内容
+        # AI： {'messages': [AIMessage(content='您好！我是您的ESG问卷智能助手。请告诉我您需要了解或填写的内容，我将为您提供专业、简明的协助。', additional_kwargs={}, response_metadata={'model_name': 'qwen-flash', 'finish_reason': 'stop', 'request_id': 'e5a09ec1-08ed-4b7a-ab31-d964331dc5fb', 'token_usage': {'input_tokens': 185, 'output_tokens': 29, 'prompt_tokens_details': {'cached_tokens': 0}, 'total_tokens': 214}}, id='lc_run--019b6882-d164-7782-950d-2b5f278fb361-0')]}
+        ai_response_str = result['messages'][-1].content
+    except Exception as e:
+        ai_response_str = f"AI服务异常：{e}"
+    chat_history.add_user_message(message)
+    chat_history.add_ai_message(ai_response_str)
+    # 更新问卷
     update_from_chat(session_id, message)
-    return {"response": ai_response_str, "sources": sources}
+    # 获取更新后的问卷内容
+    new_answers = get_questionnaire(session_id).get("answers", {}).copy()
+    # 只显示有变动的内容
+    updated_fields = {}
+    for k, v in new_answers.items():
+        if old_answers.get(k) != v:
+            updated_fields[k] = v
+    update_msg = ""
+    if updated_fields:
+        update_lines = [f"{k}: {v}" for k, v in updated_fields.items()]
+        update_msg = "问卷已更新：\n" + "\n".join(update_lines)
+    return {
+        "response": ai_response_str,
+        "update": update_msg if update_msg else None
+    }
+
+
+def stream_chat(message, session_id):
+    agent_executor, chat_history = build_agent(session_id)
+    # 假设 agent_executor.stream 返回生成器，每个 chunk 是 AIMessage 或字符串
+    for chunk in agent_executor.stream({"input": message}):
+        content = getattr(chunk, "content", str(chunk))
+        yield content

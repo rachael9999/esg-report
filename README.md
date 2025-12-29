@@ -21,11 +21,13 @@ This is a comprehensive ESG (Environmental, Social, and Governance) analysis dem
 ## Setup Instructions
 
 ### Prerequisites
+
 - Python 3.8+
 - PostgreSQL with PGVector extension
 - Virtual environment (recommended)
 
 ### Installation
+
 1. Clone or download the project.
 2. Create a virtual environment:
    ```
@@ -41,7 +43,7 @@ This is a comprehensive ESG (Environmental, Social, and Governance) analysis dem
    ```
 5. Set up environment variables in a `.env` file:
    ```
-   PGVECTOR_CONN=postgresql+psycopg2://admin:admin@localhost:5432/postgres
+   PGVECTOR_CONN=postgresql://admin:admin@localhost:5432/postgres
    DASHSCOPE_API_KEY=your_api_key_if_needed (though now using local embeddings)
    ```
 6. Initialize the database:
@@ -49,6 +51,7 @@ This is a comprehensive ESG (Environmental, Social, and Governance) analysis dem
    - Ensure PGVector is installed and configured.
 
 ### Running the Application
+
 1. Start the backend:
    ```
    cd backend

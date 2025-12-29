@@ -11,17 +11,35 @@ def process_and_store_document(file_path, session_id):
     # 1. 加载文档
     if file_path.endswith('.pdf'):
         docs = []
-        # 1. mineru 提取表格
+        # 1. camelot/pdfplumber 提取表格
         try:
-            import mineru
-            pdf_tables = mineru.read_pdf(file_path)
-            for i, df in enumerate(pdf_tables):
-                table_text = df.to_string(index=False)
+            import camelot
+            tables = camelot.io.read_pdf(file_path, pages='all', flavor='stream')
+            if tables and tables.n > 0:
+                for i, table in enumerate(tables):
+                    df = table.df
+                    if df is not None and not df.empty:
+                        table_text = df.to_string(index=False)
+                        from langchain_core.documents import Document
+                        doc = Document(page_content=table_text, metadata={"source_file": os.path.basename(file_path), "table_index": i, "type": "table"})
+                        docs.append(doc)
+                print(f"camelot 提取表格数: {tables.n}")
+            else:
+                print("camelot 未提取到表格，尝试 pdfplumber")
+                import pdfplumber
                 from langchain_core.documents import Document
-                doc = Document(page_content=table_text, metadata={"source_file": os.path.basename(file_path), "table_index": i, "type": "table"})
-                docs.append(doc)
+                with pdfplumber.open(file_path) as pdf:
+                    for i, page in enumerate(pdf.pages):
+                        for table in page.extract_tables():
+                            if table:
+                                import pandas as pd
+                                df = pd.DataFrame(table)
+                                if not df.empty:
+                                    table_text = df.to_string(index=False)
+                                    doc = Document(page_content=table_text, metadata={"source_file": os.path.basename(file_path), "page": i, "type": "table"})
+                                    docs.append(doc)
         except Exception as e:
-            print(f"mineru 解析失败: {e}")
+            print(f"表格提取异常: {e}")
         # 2. PDFPlumberLoader 或 pdfplumber 提取全文
         try:
             try:
@@ -30,8 +48,9 @@ def process_and_store_document(file_path, session_id):
                 with pdfplumber.open(file_path) as pdf:
                     for i, page in enumerate(pdf.pages):
                         page_text = page.extract_text() or ""
-                        doc = Document(page_content=page_text, metadata={"source_file": os.path.basename(file_path), "page": i, "type": "text"})
-                        docs.append(doc)
+                        if page_text.strip():
+                            doc = Document(page_content=page_text, metadata={"source_file": os.path.basename(file_path), "page": i, "type": "text"})
+                            docs.append(doc)
             except Exception as e:
                 print(f"pdfplumber 解析失败: {e}, 尝试 PDFPlumberLoader")
                 loader = PDFPlumberLoader(file_path)
@@ -57,7 +76,7 @@ def process_and_store_document(file_path, session_id):
     # 4. 存入 pgvector
     vectorstore = PGVector(
         embeddings,
-        connection=os.getenv("PGVECTOR_CONN", "postgresql+psycopg2://admin:admin@db:5432/postgres"),
+        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres"),
         collection_name=f"session_{session_id}",
         use_jsonb=True
     )

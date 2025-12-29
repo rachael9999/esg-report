@@ -14,3 +14,6 @@ pdfplumber
 dashscope
 langchain-postgres
 mineru
+langgraph
+camelot-py[cv]
+psycopg[binary]

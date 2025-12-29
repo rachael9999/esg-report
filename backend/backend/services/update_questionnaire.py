@@ -18,7 +18,7 @@ def update_from_document(session_id, files=None):
     embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
     vectorstore = PGVector(
         embeddings,
-        connection=os.getenv("PGVECTOR_CONN", "postgresql+psycopg2://admin:admin@db:5432/postgres"),
+        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres"),
         collection_name=f"session_{session_id}",
         use_jsonb=True
     )

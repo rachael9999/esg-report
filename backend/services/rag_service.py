@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from pyexpat import model
 from dotenv import load_dotenv
 from pydantic import SecretStr
@@ -247,41 +248,7 @@ def run_module_level_rag(session_id, key, company_name, docs):
 
         # Additional: if the question is KPI-style (numeric), attempt to extract numbers from images on matched pages using a VL model
         if key in ["scope1", "scope2", "scope3", "energy_total", "renewable_ratio", "hazardous_waste", "nonhazardous_waste", "recycled_waste"]:
-            # collect pages from docs
-            pages_by_file = {}
-            for d in docs:
-                src = d.metadata.get("source_path") or d.metadata.get("source_file")
-                p = d.metadata.get("page")
-                try:
-                    pi = int(p)
-                except Exception:
-                    continue
-                if src not in pages_by_file:
-                    pages_by_file[src] = set()
-                pages_by_file[src].add(pi)
-
-            vl_responses = {}
-            for src, page_set in pages_by_file.items():
-                for pi in sorted(page_set):
-                    # 直接将PDF页转为整页图片
-                    try:
-                        import fitz
-                        doc = fitz.open(src)
-                        page = doc[pi]
-                        pix = page.get_pixmap()
-                        img_bytes = pix.tobytes("png")
-                        print(f"[VL整页截图] {os.path.basename(src)} page {pi+1}: 已生成整页图片")
-                        prompt = (
-                            f"根据整页图片内容，回答以下指标的数值（如果图片中无相关信息请直接返回空）：\n"
-                            f"指标：{key}\n"
-                            "请直接输出纯数字或百分比（例如：12345 或 12.3%），不要解释。"
-                        )
-                        text = qwen_vl_langchain_qa(img_bytes, prompt)
-                        vl_responses[f"{os.path.basename(src)}:page_{pi+1}_fullpage"] = text
-                        continue
-                    except Exception as e:
-                        print(f"整页截图失败: {e}")
-                        continue
+            vl_responses = run_vl_kpi_extraction(docs, key)
             if vl_responses:
                 module_details["_vl_extraction"] = vl_responses
 
@@ -323,11 +290,69 @@ def save_answers(session_id, answer_update, answer_sources, answer_conflicts, qu
 from langchain_community.chat_models import ChatTongyi
 from langchain_core.messages import HumanMessage
 
-def qwen_vl_langchain_qa(img_bytes, question):
+def qwen_vl_langchain_qa(img_bytes, question, timeout_s=30):
     api_key = os.environ.get("DASHSCOPE_API_KEY") or ""
+    if not api_key:
+        print("VL调用跳过：未设置DASHSCOPE_API_KEY")
+        return ""
     chatLLM = ChatTongyi(model="qwen-vl-max", api_key=SecretStr(api_key))
     image_message = {"image": img_bytes}
     text_message = {"text": question}
     message = HumanMessage(content=[text_message, image_message])
-    result = chatLLM.invoke([message])
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        print(f"VL调用开始：timeout={timeout_s}s")
+        future = executor.submit(chatLLM.invoke, [message])
+        try:
+            result = future.result(timeout=timeout_s)
+        except TimeoutError:
+            print("VL调用超时")
+            return ""
+    print("VL调用完成")
     return result.content
+
+
+def run_vl_kpi_extraction(docs, key, timeout_s=30):
+    print(f"VL抽取开始：key={key}, docs={len(docs)}")
+    pages_by_file = {}
+    for d in docs:
+        src = d.metadata.get("source_path") or d.metadata.get("source_file")
+        p = d.metadata.get("page")
+        try:
+            pi = int(p)
+        except Exception:
+            continue
+        if src not in pages_by_file:
+            pages_by_file[src] = set()
+        pages_by_file[src].add(pi)
+
+    vl_responses = {}
+    for src, page_set in pages_by_file.items():
+        try:
+            import fitz
+            start_open = time.time()
+            with fitz.open(src) as doc:
+                print(f"打开PDF耗时: {time.time() - start_open:.2f}s, 文件: {os.path.basename(src)}")
+                for pi in sorted(page_set):
+                    try:
+                        page_start = time.time()
+                        page = doc[pi]
+                        pix = page.get_pixmap()
+                        img_bytes = pix.tobytes("png")
+                        print(f"[VL整页截图] {os.path.basename(src)} page {pi+1}: 已生成整页图片, 耗时: {time.time() - page_start:.2f}s")
+                        prompt = (
+                            "根据整页图片内容，回答以下指标的数值（如果图片中无相关信息请直接返回空）：\n"
+                            f"指标：{key}\n"
+                            "请直接输出纯数字或百分比（例如：12345 或 12.3%），不要解释。"
+                        )
+                        text = qwen_vl_langchain_qa(img_bytes, prompt, timeout_s=timeout_s)
+                        if text:
+                            vl_responses[f\"{os.path.basename(src)}:page_{pi+1}_fullpage\"] = text
+                    except Exception as e:
+                        print(f"整页截图失败: {e}")
+                        continue
+        except Exception as e:
+            print(f"打开PDF失败: {e}")
+            continue
+    print(f"VL抽取完成：key={key}, responses={len(vl_responses)}")
+    return vl_responses

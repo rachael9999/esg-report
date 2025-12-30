@@ -240,11 +240,9 @@ async def get_sessions():
 @app.post("/vl_kpi_extract")
 async def vl_kpi_extract(session_id: str = Form(...), key: str = Form(...)):
     """对指定KPI字段，针对RAG检索到的相关PDF页做VL图片数值抽取，返回第一个有效数值和ref。"""
-    from services.rag_service import search_docs, run_module_level_rag
-    company_name = "该企业"
+    from services.rag_service import search_docs, run_vl_kpi_extraction
     docs = search_docs(session_id, key, k=3)
-    _, module_details, _ = run_module_level_rag(session_id, key, company_name, docs)
-    vl_extraction = module_details.get("_vl_extraction", {})
+    vl_extraction = run_vl_kpi_extraction(docs, key)
     for ref, v in vl_extraction.items():
         try:
             vnum = float(str(v).replace("%", "").replace(",", "").strip())

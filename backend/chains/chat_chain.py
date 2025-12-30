@@ -108,11 +108,3 @@ async def handle_chat(message, session_id):
         "response": ai_response_str,
         "update": update_msg if update_msg else None
     }
-
-
-def stream_chat(message, session_id):
-    agent_executor, chat_history = build_agent(session_id)
-    # 假设 agent_executor.stream 返回生成器，每个 chunk 是 AIMessage 或字符串
-    for chunk in agent_executor.stream({"input": message}):
-        content = getattr(chunk, "content", str(chunk))
-        yield content

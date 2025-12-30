@@ -323,8 +323,8 @@ def run_vl_kpi_extraction(docs, key, timeout_s=30):
     vl_responses = {}
     for src, page_set in pages_by_file.items():
         try:
-            import fitz
-            with fitz.open(src) as doc:
+            import pymupdf
+            with pymupdf.open(src) as doc:
                 for pi in sorted(page_set):
                     try:
                         page = doc[pi]
@@ -338,7 +338,7 @@ def run_vl_kpi_extraction(docs, key, timeout_s=30):
                         )
                         text = qwen_vl_langchain_qa(img_bytes, prompt, timeout_s=timeout_s)
                         if text:
-                            vl_responses[f\"{os.path.basename(src)}:page_{pi+1}_fullpage\"] = text
+                            vl_responses[f"{os.path.basename(src)}:page_{pi+1}_fullpage"] = text
                     except Exception as e:
                         print(f"整页截图失败: {e}")
                         continue

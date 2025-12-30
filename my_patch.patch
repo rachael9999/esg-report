@@ -1,76 +1,79 @@
-diff --git a/frontend/utils.py b/frontend/utils.py
-index 517c792ee74ed52707a9c8895abcfacc8fba5de1..32a2c29aaf38c93da831cd44707fc5e97d5da8ef 100644
---- a/frontend/utils.py
-+++ b/frontend/utils.py
-@@ -1,50 +1,66 @@
- # 公共方法和API请求封装
- 
- import uuid
- 
- def init_chat_sessions():
-     import streamlit as st
-     # Always try to load from backend
-     import requests
-     try:
-         import os
-         backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-         response = requests.get(f"{backend_url}/sessions", timeout=5)
-         if response.ok:
-             sessions = response.json()
-             if sessions:
-                 st.session_state["chat_sessions"] = sessions
-                 if "session_id" not in st.session_state or st.session_state["session_id"] not in [s["id"] for s in sessions]:
-                     st.session_state["session_id"] = sessions[0]["id"]
+diff --git a/backend/services/rag_service.py b/backend/services/rag_service.py
+index b6a9422a7078711d069c5c6b2a2ea7cc7b05776c..31fa5f5d76064537a2b6c61909afce6a4190265f 100644
+--- a/backend/services/rag_service.py
++++ b/backend/services/rag_service.py
+@@ -280,59 +280,66 @@ def save_answers(session_id, answer_update, answer_sources, answer_conflicts, qu
+                 answers.update(answer_update)
+                 answers["_sources"] = answer_sources
+                 answers["_conflicts"] = answer_conflicts
+                 cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(answers), answer_id))
              else:
-                 # Create default if none
--                session_id = str(uuid.uuid4())
--                st.session_state["chat_sessions"] = [
--                    {"id": session_id, "name": "默认会话"}
--                ]
--                st.session_state["session_id"] = session_id
-+                try:
-+                    create_response = requests.post(
-+                        f"{backend_url}/create_session",
-+                        data={"name": "默认会话"},
-+                        timeout=5
-+                    )
-+                    if create_response.ok:
-+                        data = create_response.json()
-+                        session_id = data["session_id"]
-+                        st.session_state["chat_sessions"] = [
-+                            {"id": session_id, "name": "默认会话"}
-+                        ]
-+                        st.session_state["session_id"] = session_id
-+                    else:
-+                        raise RuntimeError("backend session creation failed")
-+                except Exception:
-+                    session_id = str(uuid.uuid4())
-+                    st.session_state["chat_sessions"] = [
-+                        {"id": session_id, "name": "默认会话"}
-+                    ]
-+                    st.session_state["session_id"] = session_id
-         else:
-             # Fallback
-             if "chat_sessions" not in st.session_state:
-                 session_id = str(uuid.uuid4())
-                 st.session_state["chat_sessions"] = [
-                     {"id": session_id, "name": "默认会话"}
-                 ]
-                 st.session_state["session_id"] = session_id
-     except:
-         # Fallback
-         if "chat_sessions" not in st.session_state:
-             session_id = str(uuid.uuid4())
-             st.session_state["chat_sessions"] = [
-                 {"id": session_id, "name": "默认会话"}
-             ]
-             st.session_state["session_id"] = session_id
-     return st.session_state["session_id"]
+                 answer_update["_sources"] = answer_sources
+                 answer_update["_conflicts"] = answer_conflicts
+                 cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, questionnaire_id, json.dumps(answer_update)))
+     conn.close()
  
- def call_api(endpoint, data=None, files=None, method="POST"):
-     import requests
-     import os
-     backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-     url = f"{backend_url}{endpoint}"
-     if method == "POST":
-         return requests.post(url, data=data, files=files)
+ from langchain_community.chat_models import ChatTongyi
+ from langchain_core.messages import HumanMessage
+ 
+ def qwen_vl_langchain_qa(img_bytes, question, timeout_s=30):
+     api_key = os.environ.get("DASHSCOPE_API_KEY") or ""
+     if not api_key:
+ 
+         print("VL调用跳过：未设置DASHSCOPE_API_KEY")
+ 
+         return ""
+     chatLLM = ChatTongyi(model="qwen-vl-max", api_key=SecretStr(api_key))
+     image_message = {"image": img_bytes}
+     text_message = {"text": question}
+     message = HumanMessage(content=[text_message, image_message])
+     from concurrent.futures import ThreadPoolExecutor, TimeoutError
+-    with ThreadPoolExecutor(max_workers=1) as executor:
+-
+-        print(f"VL调用开始：timeout={timeout_s}s")
+-        future = executor.submit(chatLLM.invoke, [message])
++    executor = ThreadPoolExecutor(max_workers=1)
++    timed_out = False
++    print(f"VL调用开始：timeout={timeout_s}s")
++    future = executor.submit(chatLLM.invoke, [message])
++    try:
++        result = future.result(timeout=timeout_s)
++    except TimeoutError:
++        timed_out = True
++        print("VL调用超时")
++        future.cancel()
++        return ""
++    finally:
+         try:
+-            result = future.result(timeout=timeout_s)
+-        except TimeoutError:
+-            print("VL调用超时")
+-            return ""
++            executor.shutdown(wait=not timed_out, cancel_futures=timed_out)
++        except TypeError:
++            executor.shutdown(wait=not timed_out)
+     print("VL调用完成")
+     return result.content
+ 
+ 
+ def run_vl_kpi_extraction(docs, key, timeout_s=30):
+     print(f"VL抽取开始：key={key}, docs={len(docs)}")
+     pages_by_file = {}
+     for d in docs:
+         src = d.metadata.get("source_path") or d.metadata.get("source_file")
+         p = d.metadata.get("page")
+         try:
+             pi = int(p)
+         except Exception:
+             continue
+         if src not in pages_by_file:
+             pages_by_file[src] = set()
+         pages_by_file[src].add(pi)
+ 
+     vl_responses = {}
+     for src, page_set in pages_by_file.items():
+         try:
+             import fitz
+             start_open = time.time()
+             with fitz.open(src) as doc:
+                 print(f"打开PDF耗时: {time.time() - start_open:.2f}s, 文件: {os.path.basename(src)}")

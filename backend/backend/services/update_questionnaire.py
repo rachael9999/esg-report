@@ -1,5 +1,3 @@
-
-# RAG 检索每个问卷问题并自动更新 answers
 import os
 import json
 from db.db import get_conn
@@ -18,7 +16,7 @@ def update_from_document(session_id, files=None):
     embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
     vectorstore = PGVector(
         embeddings,
-        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres"),
+        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/esg_memory"),
         collection_name=f"session_{session_id}",
         use_jsonb=True
     )
@@ -222,7 +220,9 @@ def update_from_document(session_id, files=None):
                 print(f"AI Response: {value}")
 
                 if qtype == "float":
-                    match = re.search(r"[-+]?[0-9]*\.?[0-9]+", value)
+                    # 先去掉千分位逗号，保证能正确提取如86,543.13
+                    value_clean = value.replace(",", "")
+                    match = re.search(r"[-+]?[0-9]*\.?[0-9]+", value_clean)
                     if match:
                         values.append(float(match.group()))
                         sources.append(format_source(doc.metadata))
@@ -328,7 +328,13 @@ def update_from_chat(session_id, message):
     llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(api_key))
 
     # prompt: 让 AI 把 message 转成问卷 JSON
-    prompt = f"你是ESG问卷助手。请根据用户输入，将相关信息以JSON格式输出。例如：{{'scope1': 500}}。只输出JSON，不要解释。\n用户输入：{message}"
+    prompt = (
+        "你是ESG问卷助手。请根据用户输入，将相关信息以JSON格式输出。"
+        "字段名请用英文（scope1, scope2, scope3, energy_total, ...），"
+        "支持用户用“范围一/范围二/范围三/Scope1/Scope2/Scope3”等中文或英文表达，"
+        "自动映射到正确字段。"
+        "例如：{'scope1': 500}。只输出JSON，不要解释。\n用户输入：" + message
+    )
     ai_result = llm.invoke(prompt)
     # 提取 JSON 字符串
     if isinstance(ai_result, dict) and "content" in ai_result:
@@ -354,7 +360,21 @@ def update_from_chat(session_id, message):
     except Exception:
         return
 
+    mapping = {
+        "范围一": "scope1", "范围二": "scope2", "范围三": "scope3",
+        "Scope1": "scope1", "Scope2": "scope2", "Scope3": "scope3"
+    }
+    for k in list(answer_update.keys()):
+        if k in mapping:
+            answer_update[mapping[k]] = answer_update.pop(k)
+
     # 更新 answers 表
+    # 确保关键环境字段总是存在于数据库记录中（即使值为 null）
+    required_fields = ["scope1", "scope2", "scope3", "energy_total", "hazardous_waste", "nonhazardous_waste", "recycled_waste"]
+    for f in required_fields:
+        if f not in answer_update:
+            answer_update[f] = None
+
     conn = get_conn()
     with conn:
         with conn.cursor() as cur:
@@ -368,7 +388,12 @@ def update_from_chat(session_id, message):
                 else:
                     answers = dict(answers)
                 answers.update(answer_update)
+                # 确保合并后的记录也包含所有 required_fields
+                for f in required_fields:
+                    if f not in answers:
+                        answers[f] = None
                 cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(answers), answer_id))
             else:
+                # 已确保 answer_update 包含所有 required_fields
                 cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, json.dumps(answer_update)))
     conn.close()

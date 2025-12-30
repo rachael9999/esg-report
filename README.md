@@ -43,7 +43,7 @@ This is a comprehensive ESG (Environmental, Social, and Governance) analysis dem
    ```
 5. Set up environment variables in a `.env` file:
    ```
-   PGVECTOR_CONN=postgresql://admin:admin@localhost:5432/postgres
+   PGVECTOR_CONN=postgresql://admin:admin@localhost:5432/esg_memory
    DASHSCOPE_API_KEY=your_api_key_if_needed (though now using local embeddings)
    ```
 6. Initialize the database:

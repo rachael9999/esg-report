@@ -39,7 +39,7 @@ def build_agent(session_id):
         embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
         vectorstore = PGVector(
             embeddings,
-            connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres"),
+            connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/esg_memory"),
             collection_name=f"session_{session_id}",
             use_jsonb=True
         )
@@ -53,7 +53,7 @@ def build_agent(session_id):
         description="根据用户问题检索相关文档片段"
     )
     tools = [rag_tool]
-    pg_url = os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres")
+    pg_url = os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/esg_memory")
     # 创建 sync_connection
     sync_connection = psycopg.connect(pg_url)
     chat_history = PostgresChatMessageHistory(

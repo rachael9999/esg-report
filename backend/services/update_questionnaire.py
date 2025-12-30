@@ -16,7 +16,7 @@ def update_from_document(session_id, files=None):
     embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
     vectorstore = PGVector(
         embeddings,
-        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres"),
+        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/esg_memory"),
         collection_name=f"session_{session_id}",
         use_jsonb=True
     )
@@ -369,6 +369,12 @@ def update_from_chat(session_id, message):
             answer_update[mapping[k]] = answer_update.pop(k)
 
     # 更新 answers 表
+    # 确保关键环境字段总是存在于数据库记录中（即使值为 null）
+    required_fields = ["scope1", "scope2", "scope3", "energy_total", "hazardous_waste", "nonhazardous_waste", "recycled_waste"]
+    for f in required_fields:
+        if f not in answer_update:
+            answer_update[f] = None
+
     conn = get_conn()
     with conn:
         with conn.cursor() as cur:
@@ -382,7 +388,12 @@ def update_from_chat(session_id, message):
                 else:
                     answers = dict(answers)
                 answers.update(answer_update)
+                # 确保合并后的记录也包含所有 required_fields
+                for f in required_fields:
+                    if f not in answers:
+                        answers[f] = None
                 cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(answers), answer_id))
             else:
+                # 已确保 answer_update 包含所有 required_fields
                 cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, json.dumps(answer_update)))
     conn.close()

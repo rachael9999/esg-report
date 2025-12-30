@@ -56,7 +56,7 @@ async def upload(files: list[UploadFile] = File(...), session_id: str = Form(...
     embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
     vectorstore = PGVector(
         embeddings,
-        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres"),
+        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/esg_memory"),
         collection_name=f"session_{session_id}",
         use_jsonb=True
     )

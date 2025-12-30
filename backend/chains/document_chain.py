@@ -76,7 +76,7 @@ def process_and_store_document(file_path, session_id):
     # 4. 存入 pgvector
     vectorstore = PGVector(
         embeddings,
-        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/postgres"),
+        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/esg_memory"),
         collection_name=f"session_{session_id}",
         use_jsonb=True
     )

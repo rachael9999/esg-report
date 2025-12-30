@@ -237,6 +237,14 @@ async def get_sessions():
     conn.close()
     return [{"id": row[0], "name": row[1]} for row in rows]
 
+def stream_chat(message, session_id):
+    agent_executor, chat_history = build_agent(session_id)
+    ai_response = ""
+    for chunk in agent_executor.stream({"input": message}):
+        content = getattr(chunk, "content", str(chunk))
+        ai_response += content
+        yield content
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

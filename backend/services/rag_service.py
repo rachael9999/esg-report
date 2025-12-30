@@ -293,7 +293,9 @@ from langchain_core.messages import HumanMessage
 def qwen_vl_langchain_qa(img_bytes, question, timeout_s=30):
     api_key = os.environ.get("DASHSCOPE_API_KEY") or ""
     if not api_key:
+
         print("VL调用跳过：未设置DASHSCOPE_API_KEY")
+
         return ""
     chatLLM = ChatTongyi(model="qwen-vl-max", api_key=SecretStr(api_key))
     image_message = {"image": img_bytes}
@@ -301,6 +303,7 @@ def qwen_vl_langchain_qa(img_bytes, question, timeout_s=30):
     message = HumanMessage(content=[text_message, image_message])
     from concurrent.futures import ThreadPoolExecutor, TimeoutError
     with ThreadPoolExecutor(max_workers=1) as executor:
+
         print(f"VL调用开始：timeout={timeout_s}s")
         future = executor.submit(chatLLM.invoke, [message])
         try:

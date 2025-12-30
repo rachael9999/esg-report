@@ -149,17 +149,19 @@ def update_from_document(session_id, files=None):
             # KPI类字段通过API调用VL模型抽取
             if key in ["scope1", "scope2", "scope3", "energy_total", "renewable_ratio", "hazardous_waste", "nonhazardous_waste", "recycled_waste"]:
                 try:
-                    import requests
-                    backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
-                    resp = requests.post(f"{backend_url}/vl_kpi_extract", data={"session_id": session_id, "key": key})
-                    if resp.ok:
-                        vl_result = resp.json()
-                        vl_value = vl_result.get("value")
-                        vl_ref = vl_result.get("ref")
-                        if vl_value is not None:
-                            vl_value = float(str(vl_value).replace("%", "").replace(",", "").strip())
+                    from services.rag_service import run_vl_kpi_extraction
+                    vl_docs = docs or search_docs(session_id, question, k=3)
+                    vl_extraction = run_vl_kpi_extraction(vl_docs, key)
+                    vl_ref = None
+                    for ref, v in vl_extraction.items():
+                        try:
+                            vl_value = float(str(v).replace("%", "").replace(",", "").strip())
+                            vl_ref = ref
+                            break
+                        except Exception:
+                            continue
                 except Exception as e:
-                    print(f"VL KPI API调用失败: {e}")
+                    print(f"VL KPI抽取失败: {e}")
             if vl_value is not None:
                 answer_update[key] = vl_value
                 # 记录VL图片来源ref

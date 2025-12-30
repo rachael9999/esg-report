@@ -302,15 +302,23 @@ def qwen_vl_langchain_qa(img_bytes, question, timeout_s=30):
     text_message = {"text": question}
     message = HumanMessage(content=[text_message, image_message])
     from concurrent.futures import ThreadPoolExecutor, TimeoutError
-    with ThreadPoolExecutor(max_workers=1) as executor:
-
+    from contextvars import copy_context
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
         print(f"VL调用开始：timeout={timeout_s}s")
-        future = executor.submit(chatLLM.invoke, [message])
+        context = copy_context()
+        future = executor.submit(context.run, chatLLM.invoke, [message])
         try:
             result = future.result(timeout=timeout_s)
         except TimeoutError:
             print("VL调用超时")
+            future.cancel()
             return ""
+        except Exception as e:
+            print(f"VL调用失败: {e}")
+            return ""
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     print("VL调用完成")
     return result.content
 
@@ -320,10 +328,17 @@ def run_vl_kpi_extraction(docs, key, timeout_s=30):
     pages_by_file = {}
     for d in docs:
         src = d.metadata.get("source_path") or d.metadata.get("source_file")
+        if src and not os.path.exists(src):
+            candidate = os.path.join("/tmp", os.path.basename(src))
+            if os.path.exists(candidate):
+                src = candidate
         p = d.metadata.get("page")
         try:
             pi = int(p)
         except Exception:
+            continue
+        if not src or not os.path.exists(src):
+            print(f"VL抽取跳过：未找到PDF路径 source_path={d.metadata.get('source_path')} source_file={d.metadata.get('source_file')}")
             continue
         if src not in pages_by_file:
             pages_by_file[src] = set()

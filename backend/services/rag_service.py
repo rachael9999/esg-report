@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from pyexpat import model
 from dotenv import load_dotenv
 from pydantic import SecretStr
@@ -292,6 +293,9 @@ from langchain_core.messages import HumanMessage
 def qwen_vl_langchain_qa(img_bytes, question, timeout_s=30):
     api_key = os.environ.get("DASHSCOPE_API_KEY") or ""
     if not api_key:
+
+        print("VL调用跳过：未设置DASHSCOPE_API_KEY")
+
         return ""
     chatLLM = ChatTongyi(model="qwen-vl-max", api_key=SecretStr(api_key))
     image_message = {"image": img_bytes}
@@ -299,15 +303,20 @@ def qwen_vl_langchain_qa(img_bytes, question, timeout_s=30):
     message = HumanMessage(content=[text_message, image_message])
     from concurrent.futures import ThreadPoolExecutor, TimeoutError
     with ThreadPoolExecutor(max_workers=1) as executor:
+
+        print(f"VL调用开始：timeout={timeout_s}s")
         future = executor.submit(chatLLM.invoke, [message])
         try:
             result = future.result(timeout=timeout_s)
         except TimeoutError:
+            print("VL调用超时")
             return ""
+    print("VL调用完成")
     return result.content
 
 
 def run_vl_kpi_extraction(docs, key, timeout_s=30):
+    print(f"VL抽取开始：key={key}, docs={len(docs)}")
     pages_by_file = {}
     for d in docs:
         src = d.metadata.get("source_path") or d.metadata.get("source_file")
@@ -327,10 +336,11 @@ def run_vl_kpi_extraction(docs, key, timeout_s=30):
             with pymupdf.open(src) as doc:
                 for pi in sorted(page_set):
                     try:
+                        page_start = time.time()
                         page = doc[pi]
                         pix = page.get_pixmap()
                         img_bytes = pix.tobytes("png")
-                        print(f"[VL整页截图] {os.path.basename(src)} page {pi+1}: 已生成整页图片")
+                        print(f"[VL整页截图] {os.path.basename(src)} page {pi+1}: 已生成整页图片, 耗时: {time.time() - page_start:.2f}s")
                         prompt = (
                             "根据整页图片内容，回答以下指标的数值（如果图片中无相关信息请直接返回空）：\n"
                             f"指标：{key}\n"
@@ -345,4 +355,5 @@ def run_vl_kpi_extraction(docs, key, timeout_s=30):
         except Exception as e:
             print(f"打开PDF失败: {e}")
             continue
+    print(f"VL抽取完成：key={key}, responses={len(vl_responses)}")
     return vl_responses

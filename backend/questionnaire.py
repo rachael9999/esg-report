@@ -98,6 +98,13 @@ def questionnaire_page():
     except Exception:
         pass
 
+    # 优先从answers['_rag_contexts']和answers['_summary']读取RAG内容和摘要
+    if isinstance(answers, dict):
+        rag_contexts = answers.get("_rag_contexts", rag_contexts)
+        summary = answers.get("_summary", summary)
+        answers.pop("_rag_contexts", None)
+        answers.pop("_summary", None)
+
     if isinstance(answers, dict):
         answers.pop("_sources", None)
         answers.pop("_conflicts", None)
@@ -343,7 +350,31 @@ def questionnaire_page():
         rag_section = "\n## RAG 检索内容\n\n"
         for key, content in rag_contexts.items():
             rag_section += f"### {key}\n{content}\n\n"
-        md = f"""# ESG 环境问卷摘要\n\n## 环境政策\n- 政策议题: {', '.join(policy_options)}\n- 定量目标: {quantitative_target}\n\n## 减排与废弃物措施\n- 能源/温室气体措施: {energy_measures}\n- 废弃物/化学品措施: {waste_measures}\n\n## 关键绩效指标 (KPIs)\n- Scope 1: {scope1} 吨 CO2 当量\n- Scope 2: {scope2} 吨 CO2 当量\n- Scope 3: {scope3} 吨 CO2 当量\n- 总能耗: {energy_total} kWh\n- 可再生能源占比: {renewable_ratio} %\n- 危险废弃物: {hazardous_waste} kg\n- 非危险废弃物: {nonhazardous_waste} kg\n- 回收/再利用废弃物: {recycled_waste} kg\n\n## 碳管理实践\n- GHG 监测/报告: {', '.join(ghg_practice)}\n- 碳减排目标: {', '.join(carbon_target)}\n\n{rag_section}\n## RAG 摘要\n{summary}"""
+        # 新增：模块级RAG结构化摘要（每个key单独分块，含模块、要点、模块概括）
+        module_section = "\n## 模块级RAG结构化摘要\n\n"
+        for k in answers:
+            if k.endswith("_modules"):
+                base = k[:-8]
+                modules = answers.get(f"{base}_modules", [])
+                module_details = answers.get(f"{base}_module_details", {})
+                module_summary = answers.get(f"{base}_module_summary", "")
+                module_section += f"### {base}\n"
+                module_section += f"- 涉及模块: {', '.join(modules)}\n"
+                for mod in modules:
+                    details = module_details.get(mod, [])
+                    if details:
+                        module_section += f"#### {mod}\n"
+                        for d in details:
+                            module_section += f"- {d}\n"
+                if module_summary:
+                    module_section += f"- 模块概括: {module_summary}\n"
+                vl = module_details.get("_vl_extraction", {})
+                if vl:
+                    module_section += f"#### VL图片抽取\n"
+                    for ref, v in vl.items():
+                        module_section += f"- {ref}: {v}\n"
+                module_section += "\n"
+        md = f"""# ESG 环境问卷摘要\n\n## 环境政策\n- 政策议题: {', '.join(policy_options)}\n- 定量目标: {quantitative_target}\n\n## 减排与废弃物措施\n- 能源/温室气体措施: {energy_measures}\n- 废弃物/化学品措施: {waste_measures}\n\n## 关键绩效指标 (KPIs)\n- Scope 1: {scope1} 吨 CO2 当量\n- Scope 2: {scope2} 吨 CO2 当量\n- Scope 3: {scope3} 吨 CO2 当量\n- 总能耗: {energy_total} kWh\n- 可再生能源占比: {renewable_ratio} %\n- 危险废弃物: {hazardous_waste} kg\n- 非危险废弃物: {nonhazardous_waste} kg\n- 回收/再利用废弃物: {recycled_waste} kg\n\n## 碳管理实践\n- GHG 监测/报告: {', '.join(ghg_practice)}\n- 碳减排目标: {', '.join(carbon_target)}\n\n{rag_section}\n## RAG 摘要\n{summary}\n{module_section}"""
         st.download_button("下载 Markdown 文件", md, file_name="esg_summary.md")
 
     # 保存更改

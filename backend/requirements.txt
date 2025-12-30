@@ -17,3 +17,5 @@ mineru
 langgraph
 camelot-py[cv]
 psycopg[binary]
+PyMuPDF
+fitz

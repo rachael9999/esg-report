@@ -12,59 +12,13 @@ def update_from_document(session_id, files=None):
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_community.embeddings import DashScopeEmbeddings
 
-    api_key = os.environ.get("DASHSCOPE_API_KEY")
-    embeddings = DashScopeEmbeddings(model="text-embedding-v1", dashscope_api_key=api_key)
-    vectorstore = PGVector(
-        embeddings,
-        connection=os.getenv("PGVECTOR_CONN", "postgresql://admin:admin@db:5432/esg_memory"),
-        collection_name=f"session_{session_id}",
-        use_jsonb=True
-    )
+    # Vectorstore and RAG utilities moved to services.rag_service
+    from services.rag_service import ingest_files, search_docs, run_rag_on_question, run_module_level_rag, save_answers, get_llm, _ai_to_text
 
-    # 1. 如 files 存在，先写入向量库
+    # 1. 如 files 存在，先写入向量库（委托给 rag_service）
     if files:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        for file in files:
-            docs = []
-            if file.endswith('.pdf'):
-                # 1. mineru 提取表格
-                try:
-                    import mineru
-                    pdf_tables = mineru.read_pdf(file)
-                    for i, df in enumerate(pdf_tables):
-                        table_text = df.to_string(index=False)
-                        from langchain_core.documents import Document
-                        doc = Document(page_content=table_text, metadata={"source_file": os.path.basename(file), "table_index": i, "type": "table"})
-                        docs.append(doc)
-                except Exception as e:
-                    print(f"mineru 解析失败: {e}")
-                # 2. pdfplumber 提取每页文本
-                try:
-                    import pdfplumber
-                    from langchain_core.documents import Document
-                    with pdfplumber.open(file) as pdf:
-                        for i, page in enumerate(pdf.pages):
-                            page_text = page.extract_text() or ""
-                            doc = Document(page_content=page_text, metadata={"source_file": os.path.basename(file), "page": i, "type": "text"})
-                            docs.append(doc)
-                except Exception as e:
-                    print(f"pdfplumber 解析失败: {e}, 尝试 PDFPlumberLoader")
-                    loader = PDFPlumberLoader(file)
-                    text_docs = loader.load()
-                    for doc in text_docs:
-                        doc.metadata["source_file"] = os.path.basename(file)
-                        doc.metadata["type"] = "text"
-                    docs.extend(text_docs)
-            elif file.endswith('.docx'):
-                loader = Docx2txtLoader(file)
-                docs = loader.load()
-            else:
-                loader = TextLoader(file)
-                docs = loader.load()
-            for doc in docs:
-                doc.metadata["source_file"] = os.path.basename(file)
-            chunks = splitter.split_documents(docs)
-            vectorstore.add_documents(chunks)
+        ingest_files(session_id, files)
+
 
     def format_source(metadata):
         source_file = metadata.get("source_file") or os.path.basename(metadata.get("source", ""))
@@ -80,18 +34,14 @@ def update_from_document(session_id, files=None):
     # Extract company name
     company_name = "该企业"
     try:
-        docs_for_name = vectorstore.similarity_search("本文档提到的企业或公司名称是什么？", k=1)
+        docs_for_name = search_docs(session_id, "本文档提到的企业或公司名称是什么？", k=1)
         if docs_for_name:
-            from langchain_community.chat_models import ChatTongyi
-            from pydantic import SecretStr
-            api_key = os.environ.get("DASHSCOPE_API_KEY")
-            llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(api_key))
+            llm = get_llm()
             name_prompt = f"请从以下内容中提取企业或公司名称，只输出名称，不要解释。\n内容：{docs_for_name[0].page_content}"
             name_result = llm.invoke(name_prompt)
-            if hasattr(name_result, "content"):
-                extracted_name = name_result.content.strip()
-                if extracted_name and len(extracted_name) < 50:  # reasonable length
-                    company_name = extracted_name
+            extracted_name = _ai_to_text(name_result)
+            if extracted_name and len(extracted_name) < 50:  # reasonable length
+                company_name = extracted_name
     except Exception:
         pass
 
@@ -189,143 +139,87 @@ def update_from_document(session_id, files=None):
         question = qinfo["question"]
         qtype = qinfo["type"]
         options = qinfo.get("options", [])
-        docs = vectorstore.similarity_search(question, k=3)
+        docs = search_docs(session_id, question, k=3)
+        values, sources = ([], [])
         if docs:
-            from langchain_community.chat_models import ChatTongyi
-            from pydantic import SecretStr
-            import re
-            api_key = os.environ.get("DASHSCOPE_API_KEY")
-            llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(api_key))
-            values = []
-            sources = []
+            values, sources = run_rag_on_question(session_id, question, qtype, options, k=3)
 
-            for doc in docs:
-                if qtype == "list" and options:
-                    rag_prompt = (
-                        "请根据以下内容回答问卷问题。"
-                        "只能从给定选项中选择，输出JSON数组，不要解释。\n"
-                        f"问题：{question}\n"
-                        f"可选项：{options}\n"
-                        f"内容：{doc.page_content}"
-                    )
+        if qtype == "float":
+            vl_value = None
+            # KPI类字段通过API调用VL模型抽取
+            if key in ["scope1", "scope2", "scope3", "energy_total", "renewable_ratio", "hazardous_waste", "nonhazardous_waste", "recycled_waste"]:
+                try:
+                    import requests
+                    backend_url = os.environ.get("BACKEND_URL", "http://fastapi-backend:8000")
+                    resp = requests.post(f"{backend_url}/vl_kpi_extract", data={"session_id": session_id, "key": key})
+                    if resp.ok:
+                        vl_result = resp.json()
+                        vl_value = vl_result.get("value")
+                        vl_ref = vl_result.get("ref")
+                        if vl_value is not None:
+                            vl_value = float(str(vl_value).replace("%", "").replace(",", "").strip())
+                except Exception as e:
+                    print(f"VL KPI API调用失败: {e}")
+            if vl_value is not None:
+                answer_update[key] = vl_value
+                # 记录VL图片来源ref
+                if 'vl_ref' in locals() and vl_ref:
+                    answer_sources[key] = [vl_ref]
                 else:
-                    rag_prompt = f"请根据以下内容回答问卷问题，只输出答案，不要解释。\n问题：{question}\n内容：{doc.page_content}"
-                ai_result = llm.invoke(rag_prompt)
-                if hasattr(ai_result, "content"):
-                    value = ai_result.content.strip()
-                else:
-                    value = str(ai_result).strip()
-                print(f"RAG for {key}: Question: {question}")
-                print(f"Content: {doc.page_content[:200]}...")
-                print(f"AI Response: {value}")
-
-                if qtype == "float":
-                    # 先去掉千分位逗号，保证能正确提取如86,543.13
-                    value_clean = value.replace(",", "")
-                    match = re.search(r"[-+]?[0-9]*\.?[0-9]+", value_clean)
-                    if match:
-                        values.append(float(match.group()))
-                        sources.append(format_source(doc.metadata))
-                elif qtype == "text":
-                    if value:
-                        values.append(value)
-                        sources.append(format_source(doc.metadata))
-                elif qtype == "list":
-                    try:
-                        parsed = json.loads(value)
-                        if isinstance(parsed, list):
-                            normalized = [
-                                item.strip().strip("'").strip('"')
-                                for item in parsed
-                                if isinstance(item, str)
-                            ]
-                        else:
-                            normalized = []
-                    except Exception:
-                        normalized = [v.strip().strip("'").strip('"') for v in value.split(',') if v.strip()]
-                    if options:
-                        normalized = [item for item in normalized if item in options]
-                    if normalized:
-                        values.append(normalized)
-                        sources.append(format_source(doc.metadata))
-
-            if qtype == "float":
-                if values:
-                    answer_update[key] = values[0]
-                    answer_sources[key] = [sources[0]]
-                    unique_values = []
-                    for val in values:
-                        if all(abs(val - existing) > 1e-6 for existing in unique_values):
-                            unique_values.append(val)
-                    if len(unique_values) > 1:
-                        answer_conflicts[key] = [
-                            {"value": val, "source": src}
-                            for val, src in zip(values, sources)
-                        ]
-                else:
-                    answer_update[key] = None
-            elif qtype == "text":
-                if values:
-                    answer_update[key] = values[0]
-                    answer_sources[key] = [sources[0]]
-                    unique_values = list(dict.fromkeys(values))
-                    if len(unique_values) > 1:
-                        answer_conflicts[key] = [
-                            {"value": val, "source": src}
-                            for val, src in zip(values, sources)
-                        ]
-                else:
-                    answer_update[key] = ""
-            elif qtype == "list":
-                merged = []
-                for value_list in values:
-                    for item in value_list:
-                        if item not in merged:
-                            merged.append(item)
-                answer_update[key] = merged
-                if sources:
-                    answer_sources[key] = sorted(set(sources))
-        else:
-            if qtype == "float":
-                answer_update[key] = None
-            elif qtype == "text":
-                answer_update[key] = ""
-            elif qtype == "list":
-                answer_update[key] = []
-            print(f"No docs found for {key}")
-    # 更新 answers 表
-    conn = get_conn()
-    with conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, answers FROM answers WHERE session_id=%s ORDER BY created_at DESC LIMIT 1", (session_id,))
-            row = cur.fetchone()
-            if row:
-                answer_id, answers = row
-                if not answers:
-                    answers = {}
-                else:
-                    answers = dict(answers)
-                answers.update(answer_update)
-                answers["_sources"] = answer_sources
-                answers["_conflicts"] = answer_conflicts
-                cur.execute("UPDATE answers SET answers=%s WHERE id=%s", (json.dumps(answers), answer_id))
+                    answer_sources[key] = ["VL图片抽取"]
+            elif values:
+                answer_update[key] = values[0]
+                answer_sources[key] = [sources[0]]
+                unique_values = []
+                for val in values:
+                    if all(abs(val - existing) > 1e-6 for existing in unique_values):
+                        unique_values.append(val)
+                if len(unique_values) > 1:
+                    answer_conflicts[key] = [
+                        {"value": val, "source": src}
+                        for val, src in zip(values, sources)
+                    ]
             else:
-                answer_update["_sources"] = answer_sources
-                answer_update["_conflicts"] = answer_conflicts
-                cur.execute("INSERT INTO answers (session_id, questionnaire_id, answers) VALUES (%s, %s, %s)", (session_id, 1, json.dumps(answer_update)))
-    conn.close()
+                answer_update[key] = None
+        elif qtype == "text":
+            if values:
+                answer_update[key] = values[0]
+                answer_sources[key] = [sources[0]]
+                unique_values = list(dict.fromkeys(values))
+                if len(unique_values) > 1:
+                    answer_conflicts[key] = [
+                        {"value": val, "source": src}
+                        for val, src in zip(values, sources)
+                    ]
+            else:
+                answer_update[key] = ""
+        elif qtype == "list":
+            merged = []
+            for value_list in values:
+                for item in value_list:
+                    if item not in merged:
+                        merged.append(item)
+            answer_update[key] = merged
+            if sources:
+                answer_sources[key] = sorted(set(sources))
+
+        if key in ["quantitative_target", "energy_measures", "waste_measures"]:
+            modules, module_details, summary_text = run_module_level_rag(session_id, key, company_name, docs)
+            answer_update[f"{key}_modules"] = modules
+            answer_update[f"{key}_module_details"] = module_details
+            answer_update[f"{key}_module_summary"] = summary_text
+    # 更新 answers 表
+    # 将结果保存到数据库
+    print("[问卷自动抽取结果]")
+    for k, v in answer_update.items():
+        print(f"完成题目: {k}，答案: {v}")
+    save_answers(session_id, answer_update, answer_sources, answer_conflicts)
 
 def update_from_chat(session_id, message):
     # 结合聊天内容，更新问卷答案
     # 让 AI 生成结构化 JSON
-    from langchain_community.chat_models import ChatTongyi
-    from pydantic import SecretStr
-    import os
-    from db.db import get_conn
-    from dotenv import load_dotenv
-    load_dotenv()
-    api_key = os.environ.get("DASHSCOPE_API_KEY")
-    llm = ChatTongyi(model="qwen-flash", api_key=SecretStr(api_key))
+    from services.rag_service import get_llm, _ai_to_text
+    llm = get_llm()
 
     # prompt: 让 AI 把 message 转成问卷 JSON
     prompt = (
@@ -336,13 +230,8 @@ def update_from_chat(session_id, message):
         "例如：{'scope1': 500}。只输出JSON，不要解释。\n用户输入：" + message
     )
     ai_result = llm.invoke(prompt)
-    # 提取 JSON 字符串
-    if isinstance(ai_result, dict) and "content" in ai_result:
-        json_str = ai_result["content"]
-    elif hasattr(ai_result, "content"):
-        json_str = ai_result.content
-    else:
-        json_str = str(ai_result)
+    # 提取 JSON 字符串并规范为文本
+    json_str = _ai_to_text(ai_result)
 
     import json
     try:

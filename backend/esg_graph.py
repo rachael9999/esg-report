@@ -4,6 +4,12 @@ LangGraph 节点与主流程定义
 from langgraph.graph import StateGraph, END
 from langgraph.graph import node
 from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, UploadFile, File, Form, Request
+import uuid
+from db.db import get_conn
+from chains.chat_chain import stream_chat as _stream_chat
+from typing import TypedDict, List, Dict, Any
+import os, tempfile
 
 # 上传节点
 @node
@@ -46,7 +52,6 @@ def chat_agent(state):
 # 数据库节点
 @node
 def review_agent(state):
-    return state
     # 简单示例：如问卷有 scope1/2/3 且都为 None，则标记为需人工审核
     q = state.get('questionnaire', {}).get('answers', {})
     if all(q.get(k) in (None, '', 0) for k in ['scope1', 'scope2', 'scope3']):
@@ -55,8 +60,24 @@ def review_agent(state):
         state['review'] = '自动审核通过'
     return state
 
+@node
+def db_node(state):
+    # 占位数据库节点，实际应实现读写数据库逻辑
+    return state
 # 构建主流程
+
+class ESGState(TypedDict, total=False):
+    session_id: str
+    files: List[str]
+    message: str
+    upload_done: bool
+    questionnaire: Dict[str, Any]
+    chat_response: str
+    review: str
+
 def build_esg_graph():
+    # 提供 state_schema，声明流程中会使用的状态字段，避免缺少参数错误
+    graph = StateGraph(state_schema=ESGState)
     graph.add_node('upload', upload_agent)
     graph.add_node('questionnaire', questionnaire_agent)
     graph.add_node('chat', chat_agent)
@@ -81,6 +102,7 @@ def build_esg_graph():
     graph.add_edge("db", END)
     graph.set_entry_point("upload")
     return graph
+    return graph
 
 app = FastAPI()
 esg_graph = build_esg_graph()
@@ -88,14 +110,17 @@ esg_graph = build_esg_graph()
 @app.post("/upload")
 async def upload(files: list[UploadFile] = File(...), session_id: str = Form(...)):
     # 保存上传文件到临时路径
-    import os, tempfile
+    
     file_paths = []
     for uploaded_file in files:
         filename = uploaded_file.filename or "unknown"
         safe_name = os.path.basename(filename)
         unique_name = f"{session_id}_{uuid.uuid4().hex}_{safe_name}"
         tmp_path = os.path.join(tempfile.gettempdir(), unique_name)
+        contents = await uploaded_file.read()
         with open(tmp_path, "wb") as f:
+            f.write(contents)
+        file_paths.append(tmp_path)
     state = {"session_id": session_id, "files": file_paths}
     result = esg_graph.run(state)
     # 清理临时文件
@@ -228,7 +253,7 @@ async def get_chats(request: Request):
 
 @app.get("/sessions")
 async def get_sessions():
-    from db.db import get_conn
+    
     conn = get_conn()
     with conn:
         with conn.cursor() as cur:
@@ -238,12 +263,9 @@ async def get_sessions():
     return [{"id": row[0], "name": row[1]} for row in rows]
 
 def stream_chat(message, session_id):
-    agent_executor, chat_history = build_agent(session_id)
-    ai_response = ""
-    for chunk in agent_executor.stream({"input": message}):
-        content = getattr(chunk, "content", str(chunk))
-        ai_response += content
-        yield content
+    
+    for chunk in _stream_chat(message, session_id):
+        yield chunk
 
 if __name__ == "__main__":
     import uvicorn
